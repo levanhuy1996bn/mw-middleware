@@ -1,0 +1,11 @@
+{
+    "controllers": {
+        "@web-auth/webauthn-stimulus": {
+            "webauthn": {
+                "enabled": true,
+                "fetch": "eager"
+            }
+        }
+    },
+    "entrypoints": []
+}

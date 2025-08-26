@@ -1,0 +1,123 @@
+# This file is the entry point to configure your own services.
+# Files in the packages/ subdirectory configure your dependencies.
+
+# Put parameters here that don't need to change on each machine where the app is deployed
+# https://symfony.com/doc/current/best_practices.html#use-parameters-for-application-configuration
+parameters:
+    power_reviews_merchant_id: '%env(POWER_REVIEWS_MERCHANT_ID)%'
+    power_reviews_base_url: '%env(POWER_REVIEWS_BASE_URL)%'
+    power_reviews_read_api_key: '%env(POWER_REVIEWS_READ_API_KEY)%'
+
+services:
+    # default configuration for services in *this* file
+    _defaults:
+        autowire: true      # Automatically injects dependencies in your services.
+        autoconfigure: true # Automatically registers your services as commands, event subscribers, etc.
+
+    # makes classes in src/ available to be used as services
+    # this creates a service per class whose id is the fully-qualified class name
+    App\:
+        resource: '../src/'
+        exclude:
+            - '../src/DependencyInjection/'
+            - '../src/Entity/'
+            - '../src/Kernel.php'
+
+    # add more service definitions when explicit configuration is needed
+    # please note that last definitions always *replace* previous ones
+
+    App\Admin\Extension\LogAdminExtension:
+        tags:
+            - { name: 'sonata.admin.extension', global: true }
+
+    App\Command\AddDiscountsToProductsCommand:
+        tags:
+            - { name: 'console.command', command: 'middleware:discount:add-to-product' }
+
+    App\Command\AssociateAverageReviewScoreToAllProductsCommand:
+        tags:
+            - { name: 'console.command', command: 'middleware:associate-average-review-score-to-all-products' }
+
+    App\Command\AssociateFoundationsToMattressesCommand:
+        tags:
+            - { name: 'console.command', command: 'middleware:associate-foundations-to-mattresses' }
+
+    App\Command\AssociateSimilarProductsToMattressesCommand:
+        tags:
+            - { name: 'console.command', command: 'middleware:associate-similar-product-to-mattresses' }
+
+    App\Command\AutomateFrequentlyBoughtWithProductRelationshipsCommand:
+        tags:
+            - { name: 'console.command', command: 'middleware:automate-frequently-bought-with-product-relationships' }
+
+    App\Command\AutomateFrequentlyBoughtWithProductRelationshipsFromFileCommand:
+        tags:
+            - { name: 'console.command', command: 'middleware:automate-frequently-bought-with-product-relationships-from-file' }
+
+    App\Command\MiddlewareDestinationToSourceLocationDetailsUpdateCommand:
+        # adding the tag with the command is important to associate the MetafieldLocationDetailsSubscriber
+        # @see \Endertech\EcommerceMiddlewareEventsBundle\DependencyInjection\Compiler\CommandPass::process()
+        tags:
+            - { name: 'console.command', command: 'middleware:destination-to-source:location-details-update' }
+
+    App\Command\MiddlewareMiddlewareGeneratePowerReviewsOrderFileCommand:
+        tags:
+            - { name: 'console.command', command: 'middleware:middleware:generate-power-reviews-order-file' }
+
+    App\Command\MiddlewareMiddlewareGeneratePowerReviewsProductFileCommand:
+        tags:
+            - { name: 'console.command', command: 'middleware:middleware:generate-power-reviews-product-file' }
+
+    App\EcommerceMiddleware\ShopifyStoris\Task\Middleware\GeneratePowerReviewsOrderFile:
+        calls:
+            - setEndpoint: [ '%env(POWER_REVIEWS_SFTP_ENDPOINT)%' ]
+            - setUsername: [ '%env(POWER_REVIEWS_SFTP_USERNAME)%' ]
+            - setPassword: [ '%env(POWER_REVIEWS_SFTP_PASSWORD)%' ]
+            - setPort: [ '%env(POWER_REVIEWS_SFTP_PORT)%' ]
+
+    App\EcommerceMiddleware\ShopifyStoris\Task\Middleware\GeneratePowerReviewsProductFile:
+        calls:
+            - setEndpoint: [ '%env(POWER_REVIEWS_SFTP_ENDPOINT)%' ]
+            - setUsername: [ '%env(POWER_REVIEWS_SFTP_USERNAME)%' ]
+            - setPassword: [ '%env(POWER_REVIEWS_SFTP_PASSWORD)%' ]
+            - setPort: [ '%env(POWER_REVIEWS_SFTP_PORT)%' ]
+
+    App\EventSubscriber\InventorySubscriber:
+        tags:
+            - { name: 'kernel.event_subscriber' }
+
+    App\EventSubscriber\MetafieldIsOnSaleSubscriber:
+        tags:
+            - { name: 'kernel.event_subscriber' }
+
+    App\EventSubscriber\MetafieldLocationDetailsSubscriber:
+        tags:
+            - { name: 'kernel.event_subscriber' }
+
+    App\EventSubscriber\MetafieldRetailWarehouseSubscriber:
+        tags:
+            - { name: 'kernel.event_subscriber' }
+
+    App\EventSubscriber\OrderSubscriber:
+        tags:
+            - { name: 'kernel.event_subscriber' }
+
+    App\EventSubscriber\StorisCalculateInventorySubscriber:
+        tags:
+            - { name: 'kernel.event_subscriber' }
+
+    App\EventSubscriber\VariantUpdatePriceOnlySubscriber:
+        tags:
+            - { name: 'kernel.event_subscriber' }
+
+    App\Location\YextLocation:
+        arguments: ['@http_client', '%env(default::YEXT_API_ACCOUNT_ID)%', '%env(default::YEXT_API_KEY)%']
+
+    Doctrine\Persistence\ObjectManager:
+        alias: Doctrine\ORM\EntityManagerInterface
+
+doctrine:
+    orm:
+        resolve_target_entities:
+            Symfony\Component\Security\Core\User\UserInterface: Endertech\EcommerceMiddlewareUserAdminBundle\Entity\User
+

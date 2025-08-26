@@ -1,0 +1,6 @@
+framework:
+  webhook:
+    routing:
+      shopify:
+        service: App\Webhook\ShopifyWebhookParser
+        secret: '%env(string:default::SHOPIFY_WEBHOOK_SECRET)%'

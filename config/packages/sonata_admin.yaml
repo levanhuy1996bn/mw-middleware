@@ -1,0 +1,22 @@
+sonata_admin:
+    #title: 'Sonata Admin'
+    dashboard:
+        blocks:
+            - { type: sonata.admin.block.admin_list, position: left }
+
+    title: 'Middleware'
+    #options:
+    #    title_mode: single_text
+    show_mosaic_button: false
+    persist_filters: true
+    security:
+        handler: sonata.admin.security.handler.role
+
+sonata_block:
+    blocks:
+        sonata.admin.block.admin_list:
+            contexts: [admin]
+
+        sonata.user.block.menu:    # used to display the menu in profile pages
+        sonata.user.block.account: # used to display menu option (login option)
+        sonata.block.service.text: # used to if you plan to use Sonata user routes

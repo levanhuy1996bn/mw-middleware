@@ -1,0 +1,12 @@
+diff --git a/src/Filter/Filter.php b/src/Filter/Filter.php
+--- a/src/Filter/Filter.php
++++ b/src/Filter/Filter.php
+@@ -121,7 +121,7 @@ abstract class Filter implements FilterInterface
+ 
+     public function getFieldName(): string
+     {
+-        $fieldName = $this->getOption('field_name');
++        $fieldName = $this->getOption('field_name', $this->getOption('field_mapping', [])['fieldName'] ?? null);
+ 
+         if (null === $fieldName) {
+             throw new \RuntimeException(sprintf(
