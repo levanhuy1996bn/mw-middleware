@@ -61,12 +61,31 @@ class ShopifyWebhookConsumer implements ConsumerInterface
                         $this->logger->warning('ProductCreate userErrors', ['errors' => $errors]);
                         $this->createEventTriggeredFile('PRODUCTS_CREATE_errors', json_encode($errors));
                     }
+
+                    // Nếu có variants trong payload REST, tạo variants sau khi product được tạo
+                    $createdProductId = $response['data']['productCreate']['product']['id'] ?? null;
+                    if ($createdProductId && !empty($payload['variants']) && is_array($payload['variants'])) {
+                        $variantsInput = $this->mapVariantsForBulkCreate($payload['variants']);
+                        if (!empty($variantsInput)) {
+                            $bulkResp = $this->requestQuery(
+                                $this->graphQLQueryHelper->getProductVariantsBulkCreateMutation(),
+                                [
+                                    'productId' => $createdProductId,
+                                    'variants' => $variantsInput,
+                                ]
+                            );
+                            $bulkErrors = $bulkResp['data']['productVariantsBulkCreate']['userErrors'] ?? [];
+                            if (!empty($bulkErrors)) {
+                                $this->logger->warning('VariantsBulkCreate userErrors', ['errors' => $bulkErrors]);
+                                $this->createEventTriggeredFile('PRODUCTS_CREATE_VARIANTS_errors', json_encode($bulkErrors));
+                            }
+                        }
+                    }
                     break;
 
                 case ShopifyWebhookParser::EVENT_TOPICS['PRODUCTS_UPDATE']:
                     $input = $this->mapProductUpdateInput($payload);
 
-                    // Nếu không có id GraphQL, không thể update an toàn
                     if (empty($input['id'])) {
                         $this->logger->warning('Skipping ProductUpdate: missing admin_graphql_api_id in payload');
                         break;
@@ -82,10 +101,29 @@ class ShopifyWebhookConsumer implements ConsumerInterface
                         $this->logger->warning('ProductUpdate userErrors', ['errors' => $errors]);
                         $this->createEventTriggeredFile('PRODUCTS_UPDATE_errors', json_encode($errors));
                     }
+
+                    // Cập nhật variants nếu có trong payload
+                    if (!empty($payload['variants']) && is_array($payload['variants'])) {
+                        $productId = $input['id'];
+                        $variantsInput = $this->mapVariantsForBulkUpdate($payload['variants']);
+                        if (!empty($variantsInput)) {
+                            $bulkResp = $this->requestQuery(
+                                $this->graphQLQueryHelper->getProductVariantsBulkUpdateMutation(),
+                                [
+                                    'productId' => $productId,
+                                    'variants' => $variantsInput,
+                                ]
+                            );
+                            $bulkErrors = $bulkResp['data']['productVariantsBulkUpdate']['userErrors'] ?? [];
+                            if (!empty($bulkErrors)) {
+                                $this->logger->warning('VariantsBulkUpdate userErrors', ['errors' => $bulkErrors]);
+                                $this->createEventTriggeredFile('PRODUCTS_UPDATE_VARIANTS_errors', json_encode($bulkErrors));
+                            }
+                        }
+                    }
                     break;
 
                 default:
-                    // Không xử lý các topic khác nhưng vẫn acknowledge
                     $this->logger->info('Shopify webhook topic ignored', ['topic' => $topic]);
                     break;
             }
@@ -100,7 +138,6 @@ class ShopifyWebhookConsumer implements ConsumerInterface
 
     private function extractTopicFromEventId(string $eventId): ?string
     {
-        // eventId format: <topic>.<domain>.<webhook-id>
         $firstDot = strpos($eventId, '.');
         if ($firstDot === false) {
             return null;
@@ -129,11 +166,10 @@ class ShopifyWebhookConsumer implements ConsumerInterface
         }
 
         if (array_key_exists('status', $payload) && is_string($payload['status'])) {
-            $input['status'] = strtoupper($payload['status']); // ACTIVE|DRAFT|ARCHIVED
+            $input['status'] = strtoupper($payload['status']);
         }
 
         if (array_key_exists('tags', $payload)) {
-            // REST trả tags dạng string "tag1, tag2"; GraphQL cần [String]
             $input['tags'] = $this->normalizeTags($payload['tags']);
         }
 
@@ -141,13 +177,11 @@ class ShopifyWebhookConsumer implements ConsumerInterface
             $input['templateSuffix'] = $payload['template_suffix'];
         }
 
-        // Bỏ qua các trường không thuộc ProductInput để tránh userErrors
         return $input;
     }
 
     private function mapProductUpdateInput(array $payload): array
     {
-        // Trường bắt buộc: id là Admin GraphQL GID
         $input = [];
 
         if (!empty($payload['admin_graphql_api_id'])) {
@@ -183,6 +217,73 @@ class ShopifyWebhookConsumer implements ConsumerInterface
         }
 
         return $input;
+    }
+
+    private function mapVariantsForBulkCreate(array $variants): array
+    {
+        $result = [];
+        foreach ($variants as $v) {
+            $node = [];
+            if (isset($v['sku'])) { $node['sku'] = (string) $v['sku']; }
+            if (isset($v['title'])) { $node['title'] = (string) $v['title']; }
+            if (isset($v['price'])) { $node['price'] = (string) $v['price']; }
+            if (isset($v['compare_at_price'])) { $node['compareAtPrice'] = (string) $v['compare_at_price']; }
+            if (isset($v['barcode'])) { $node['barcode'] = (string) $v['barcode']; }
+            if (isset($v['tax_code'])) { $node['taxCode'] = (string) $v['tax_code']; }
+            if (isset($v['weight'])) {
+                $node['weight'] = (float) $v['weight'];
+                if (isset($v['weight_unit'])) { $node['weightUnit'] = (string) strtoupper($v['weight_unit']); }
+            }
+            // selectedOptions từ REST: option1/option2/option3
+            $selectedOptions = [];
+            for ($i = 1; $i <= 3; $i++) {
+                $optKey = 'option'.$i;
+                if (!empty($v[$optKey])) {
+                    $selectedOptions[] = [
+                        'name' => 'option'.$i,
+                        'value' => (string) $v[$optKey],
+                    ];
+                }
+            }
+            if (!empty($selectedOptions)) {
+                $node['selectedOptions'] = $selectedOptions;
+            }
+
+            if (!empty($node)) {
+                $result[] = $node;
+            }
+        }
+        return $result;
+    }
+
+    private function mapVariantsForBulkUpdate(array $variants): array
+    {
+        $result = [];
+        foreach ($variants as $v) {
+            $node = [];
+            // Yêu cầu có id GraphQL của variant để update; nếu REST gửi admin_graphql_api_id cho variant, dùng nó
+            if (!empty($v['admin_graphql_api_id'])) {
+                $node['id'] = $v['admin_graphql_api_id'];
+            } elseif (!empty($v['id'])) {
+                // Nếu chỉ có id số (REST), KHÔNG đủ để gọi GraphQL update — bỏ qua để tránh lỗi
+                continue;
+            } else {
+                continue;
+            }
+
+            if (isset($v['sku'])) { $node['sku'] = (string) $v['sku']; }
+            if (isset($v['title'])) { $node['title'] = (string) $v['title']; }
+            if (isset($v['price'])) { $node['price'] = (string) $v['price']; }
+            if (isset($v['compare_at_price'])) { $node['compareAtPrice'] = (string) $v['compare_at_price']; }
+            if (isset($v['barcode'])) { $node['barcode'] = (string) $v['barcode']; }
+            if (isset($v['tax_code'])) { $node['taxCode'] = (string) $v['tax_code']; }
+            if (isset($v['weight'])) {
+                $node['weight'] = (float) $v['weight'];
+                if (isset($v['weight_unit'])) { $node['weightUnit'] = (string) strtoupper($v['weight_unit']); }
+            }
+            $result[] = $node;
+        }
+        return $result;
     }
 
     private function normalizeTags($tags): array
@@ -229,6 +330,6 @@ class ShopifyWebhookConsumer implements ConsumerInterface
     private function getEventTriggeredFileName($name = null)
     {
         $name = preg_replace('`[^a-zA-Z0-9_-]+`', '_', ''.$name);
-        return 'webhook_shopify_'.$name.'_event_triggered.txt';
+        return 'webhook_shopify_'.$name+'_event_triggered.txt';
     }
 }
