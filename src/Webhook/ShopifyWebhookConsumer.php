@@ -81,6 +81,25 @@ class ShopifyWebhookConsumer implements ConsumerInterface
                             }
                         }
                     }
+
+                    // Tạo media nếu payload có media
+                    if ($createdProductId) {
+                        $mediaInput = $this->mapMediaCreateInput($payload);
+                        if (!empty($mediaInput)) {
+                            $mediaResp = $this->requestQuery(
+                                $this->graphQLQueryHelper->getProductCreateMediaMutation(),
+                                [
+                                    'productId' => $createdProductId,
+                                    'media' => $mediaInput,
+                                ]
+                            );
+                            $mediaErrors = $mediaResp['data']['productCreateMedia']['mediaUserErrors'] ?? [];
+                            if (!empty($mediaErrors)) {
+                                $this->logger->warning('ProductCreateMedia userErrors', ['errors' => $mediaErrors]);
+                                $this->createEventTriggeredFile('PRODUCTS_CREATE_MEDIA_errors', json_encode($mediaErrors));
+                            }
+                        }
+                    }
                     break;
 
                 case ShopifyWebhookParser::EVENT_TOPICS['PRODUCTS_UPDATE']:
@@ -119,6 +138,23 @@ class ShopifyWebhookConsumer implements ConsumerInterface
                                 $this->logger->warning('VariantsBulkUpdate userErrors', ['errors' => $bulkErrors]);
                                 $this->createEventTriggeredFile('PRODUCTS_UPDATE_VARIANTS_errors', json_encode($bulkErrors));
                             }
+                        }
+                    }
+
+                    // Tạo media mới nếu payload có media trong update
+                    $mediaInputUpdate = $this->mapMediaCreateInput($payload);
+                    if (!empty($mediaInputUpdate)) {
+                        $mediaResp = $this->requestQuery(
+                            $this->graphQLQueryHelper->getProductCreateMediaMutation(),
+                            [
+                                'productId' => $input['id'],
+                                'media' => $mediaInputUpdate,
+                            ]
+                        );
+                        $mediaErrors = $mediaResp['data']['productCreateMedia']['mediaUserErrors'] ?? [];
+                        if (!empty($mediaErrors)) {
+                            $this->logger->warning('ProductCreateMedia userErrors (update)', ['errors' => $mediaErrors]);
+                            $this->createEventTriggeredFile('PRODUCTS_UPDATE_MEDIA_errors', json_encode($mediaErrors));
                         }
                     }
                     break;
@@ -286,6 +322,21 @@ class ShopifyWebhookConsumer implements ConsumerInterface
         return $result;
     }
 
+    private function mapMediaCreateInput(array $payload): array
+    {
+        $newMedia = [];
+        if (array_key_exists('media', $payload) && is_array($payload['media']) && count($payload['media']) > 0) {
+            foreach ($payload['media'] as $media) {
+                $newMedia[] = [
+                    'alt' => $media['alt'] ?? null,
+                    'mediaContentType' => $media['media_content_type'] ?? null,
+                    'originalSource' => $media['preview_image']['src'] ?? null,
+                ];
+            }
+        }
+        return $newMedia;
+    }
+
     private function normalizeTags($tags): array
     {
         if (is_array($tags)) {
@@ -330,6 +381,6 @@ class ShopifyWebhookConsumer implements ConsumerInterface
     private function getEventTriggeredFileName($name = null)
     {
         $name = preg_replace('`[^a-zA-Z0-9_-]+`', '_', ''.$name);
-        return 'webhook_shopify_'.$name+'_event_triggered.txt';
+        return 'webhook_shopify_'.$name.'_event_triggered.txt';
     }
 }
