@@ -306,20 +306,16 @@ class ShopifyWebhookConsumer implements ConsumerInterface
             if (array_key_exists('taxable', $v)) { $node['taxable'] = (bool) $v['taxable']; }
             if (array_key_exists('requires_shipping', $v)) { $node['requiresShipping'] = (bool) $v['requires_shipping']; }
             if (isset($v['tax_code'])) { $node['taxCode'] = (string) $v['tax_code']; }
-            // Build optionValues from option1/2/3 in order, names must match product options
-            $optionValues = [];
+            // Build options array from option1/2/3 in order
+            $options = [];
             for ($i = 1; $i <= 3; $i++) {
                 $optKey = 'option'.$i;
                 if (array_key_exists($optKey, $v) && $v[$optKey] !== null && $v[$optKey] !== '') {
-                    $optionValues[] = [ 'name' => 'Option'.($i), 'value' => (string) $v[$optKey] ];
+                    $options[] = (string) $v[$optKey];
                 }
             }
-            if (!empty($optionValues)) {
-                $node['optionValues'] = $optionValues;
-            }
-            if (!empty($node)) {
-                $result[] = $node;
-            }
+            if (!empty($options)) { $node['options'] = $options; }
+            if (!empty($node)) { $result[] = $node; }
         }
         return $result;
     }
