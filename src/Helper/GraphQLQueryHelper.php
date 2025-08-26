@@ -1454,4 +1454,15 @@ class GraphQLQueryHelper
         }
         ';
     }
+
+    public function getProductOptionsQuery(): string {
+        return '
+        query ProductOptions($productId: ID!) {
+          product(id: $productId) {
+            id
+            options(first: 3) { name }
+          }
+        }
+        ';
+    }
 }
