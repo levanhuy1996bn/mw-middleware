@@ -165,7 +165,7 @@ class ShopifyWebhookConsumer implements ConsumerInterface
                     break;
             }
         } catch (\Throwable $e) {
-            $this->logger->error('Error processing Shopify webhook', [ 'event_id' => $eventId, 'topic' => $topic, 'exception' => $e ]);
+            $this->logger->error('Error processing Shopify webhook' . $e->getMessage(), [ 'event_id' => $eventId, 'topic' => $topic, 'exception' => $e ]);
         }
     }
 
