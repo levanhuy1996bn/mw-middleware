@@ -345,7 +345,7 @@ class ShopifyWebhookConsumer implements ConsumerInterface
 
     private function fetchExistingVariants(string $productId): array
     {
-        $resp = $this->requestQuery($this->graphQLQueryHelper->getProductVariantsForDedupQuery(), ['productId' => $productId]);
+        $resp = $this->requestQuery($this->graphQLQueryHelper->getProductVariantsForQuery(), ['productId' => $productId]);
         $nodes = $resp['data']['product']['variants']['nodes'] ?? [];
         $bySku = [];
         foreach ($nodes as $node) {
@@ -386,7 +386,7 @@ class ShopifyWebhookConsumer implements ConsumerInterface
 
     private function fetchExistingMediaPreviewUrls(string $productId): array
     {
-        $resp = $this->requestQuery($this->graphQLQueryHelper->getProductMediaForDedupQuery(), ['productId' => $productId]);
+        $resp = $this->requestQuery($this->graphQLQueryHelper->getProductMediaForQuery(), ['productId' => $productId]);
         $nodes = $resp['data']['product']['media']['nodes'] ?? [];
         $urls = [];
         foreach ($nodes as $node) {

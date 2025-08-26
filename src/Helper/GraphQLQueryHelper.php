@@ -1400,9 +1400,9 @@ class GraphQLQueryHelper
         ';
     }
 
-    public function getProductVariantsForDedupQuery(): string {
+    public function getProductVariantsForQuery(): string {
         return '
-        query ProductVariantsForDedup($productId: ID!) {
+        query ProductVariants($productId: ID!) {
           product(id: $productId) {
             id
             variants(first: 250) {
@@ -1417,9 +1417,9 @@ class GraphQLQueryHelper
         ';
     }
 
-    public function getProductMediaForDedupQuery(): string {
+    public function getProductMediaForQuery(): string {
         return '
-        query ProductMediaForDedup($productId: ID!) {
+        query ProductMedia($productId: ID!) {
           product(id: $productId) {
             id
             media(first: 100) {
