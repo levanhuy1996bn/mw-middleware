@@ -63,8 +63,13 @@ class ShopifyWebhookConsumer implements ConsumerInterface
 
                     $createdProductId = $response['data']['productCreate']['product']['id'] ?? null;
 
+                    // Ensure product options exist before creating variants
+                    if ($createdProductId && $this->shouldCreateVariants($payload)) {
+                        $this->ensureProductOptions($createdProductId, $payload);
+                    }
+
                     // Deduplicate and create new variants if present
-                    if ($createdProductId && !empty($payload['variants']) && is_array($payload['variants'])) {
+                    if ($createdProductId && $this->shouldCreateVariants($payload)) {
                         $existingVariants = $this->fetchExistingVariants($createdProductId);
                         $variantsInput = $this->mapVariantsForBulkCreate($this->filterNewVariants($payload['variants'], $existingVariants));
                         if (!empty($variantsInput)) {
@@ -149,19 +154,22 @@ class ShopifyWebhookConsumer implements ConsumerInterface
 
                         // Create missing variants (by SKU)
                         $newVariants = $this->filterNewVariants($payload['variants'], $existingVariants);
-                        $createInput = $this->mapVariantsForBulkCreate($newVariants);
-                        if (!empty($createInput)) {
-                            $bulkResp = $this->requestQuery(
-                                $this->graphQLQueryHelper->getProductVariantsBulkCreateMutation(),
-                                [
-                                    'productId' => $productId,
-                                    'variants' => $createInput,
-                                ]
-                            );
-                            $bulkErrors = $bulkResp['data']['productVariantsBulkCreate']['userErrors'] ?? [];
-                            if (!empty($bulkErrors)) {
-                                $this->logger->warning('VariantsBulkCreate userErrors (update)', ['errors' => $bulkErrors]);
-                                $this->createEventTriggeredFile('PRODUCTS_UPDATE_VARIANTS_CREATE_errors', json_encode($bulkErrors));
+                        if (!empty($newVariants)) {
+                            $this->ensureProductOptions($productId, $payload);
+                            $createInput = $this->mapVariantsForBulkCreate($newVariants);
+                            if (!empty($createInput)) {
+                                $bulkResp = $this->requestQuery(
+                                    $this->graphQLQueryHelper->getProductVariantsBulkCreateMutation(),
+                                    [
+                                        'productId' => $productId,
+                                        'variants' => $createInput,
+                                    ]
+                                );
+                                $bulkErrors = $bulkResp['data']['productVariantsBulkCreate']['userErrors'] ?? [];
+                                if (!empty($bulkErrors)) {
+                                    $this->logger->warning('VariantsBulkCreate userErrors (update)', ['errors' => $bulkErrors]);
+                                    $this->createEventTriggeredFile('PRODUCTS_UPDATE_VARIANTS_CREATE_errors', json_encode($bulkErrors));
+                                }
                             }
                         }
                     }
@@ -281,33 +289,36 @@ class ShopifyWebhookConsumer implements ConsumerInterface
         return $input;
     }
 
+    private function shouldCreateVariants(array $payload): bool
+    {
+        return !empty($payload['variants']) && is_array($payload['variants']);
+    }
+
     private function mapVariantsForBulkCreate(array $variants): array
     {
         $result = [];
         foreach ($variants as $v) {
             $node = [];
             if (isset($v['sku'])) { $node['sku'] = (string) $v['sku']; }
-            if (isset($v['title'])) { $node['title'] = (string) $v['title']; }
             if (isset($v['price'])) { $node['price'] = (string) $v['price']; }
             if (isset($v['compare_at_price'])) { $node['compareAtPrice'] = (string) $v['compare_at_price']; }
             if (isset($v['barcode'])) { $node['barcode'] = (string) $v['barcode']; }
-            if (isset($v['tax_code'])) { $node['taxCode'] = (string) $v['tax_code']; }
+            if (array_key_exists('taxable', $v)) { $node['taxable'] = (bool) $v['taxable']; }
+            if (array_key_exists('requires_shipping', $v)) { $node['requiresShipping'] = (bool) $v['requires_shipping']; }
             if (isset($v['weight'])) {
                 $node['weight'] = (float) $v['weight'];
-                if (isset($v['weight_unit'])) { $node['weightUnit'] = (string) strtoupper($v['weight_unit']); }
+                if (isset($v['weight_unit'])) { $node['weightUnit'] = $this->mapWeightUnit((string) $v['weight_unit']); }
             }
-            $selectedOptions = [];
+            // Build options array from option1/2/3 in order
+            $options = [];
             for ($i = 1; $i <= 3; $i++) {
                 $optKey = 'option'.$i;
-                if (!empty($v[$optKey])) {
-                    $selectedOptions[] = [
-                        'name' => 'option'.$i,
-                        'value' => (string) $v[$optKey],
-                    ];
+                if (array_key_exists($optKey, $v) && $v[$optKey] !== null && $v[$optKey] !== '') {
+                    $options[] = (string) $v[$optKey];
                 }
             }
-            if (!empty($selectedOptions)) {
-                $node['selectedOptions'] = $selectedOptions;
+            if (!empty($options)) {
+                $node['options'] = $options;
             }
 
             if (!empty($node)) {
@@ -321,26 +332,79 @@ class ShopifyWebhookConsumer implements ConsumerInterface
     {
         $result = [];
         foreach ($variants as $v) {
-            $node = [];
-            if (!empty($v['admin_graphql_api_id'])) {
-                $node['id'] = $v['admin_graphql_api_id'];
-            } else {
+            if (empty($v['admin_graphql_api_id'])) {
                 continue;
             }
-
+            $node = ['id' => $v['admin_graphql_api_id']];
             if (isset($v['sku'])) { $node['sku'] = (string) $v['sku']; }
-            if (isset($v['title'])) { $node['title'] = (string) $v['title']; }
             if (isset($v['price'])) { $node['price'] = (string) $v['price']; }
             if (isset($v['compare_at_price'])) { $node['compareAtPrice'] = (string) $v['compare_at_price']; }
             if (isset($v['barcode'])) { $node['barcode'] = (string) $v['barcode']; }
-            if (isset($v['tax_code'])) { $node['taxCode'] = (string) $v['tax_code']; }
+            if (array_key_exists('taxable', $v)) { $node['taxable'] = (bool) $v['taxable']; }
+            if (array_key_exists('requires_shipping', $v)) { $node['requiresShipping'] = (bool) $v['requires_shipping']; }
             if (isset($v['weight'])) {
                 $node['weight'] = (float) $v['weight'];
-                if (isset($v['weight_unit'])) { $node['weightUnit'] = (string) strtoupper($v['weight_unit']); }
+                if (isset($v['weight_unit'])) { $node['weightUnit'] = $this->mapWeightUnit((string) $v['weight_unit']); }
             }
             $result[] = $node;
         }
         return $result;
+    }
+
+    private function ensureProductOptions(string $productId, array $payload): void
+    {
+        try {
+            // Derive option names and values
+            $optionNames = [];
+            if (!empty($payload['options']) && is_array($payload['options'])) {
+                foreach ($payload['options'] as $opt) {
+                    if (!empty($opt['name'])) {
+                        $optionNames[] = (string) $opt['name'];
+                    }
+                }
+            } else {
+                for ($i = 1; $i <= 3; $i++) {
+                    $hasAny = false;
+                    if (!empty($payload['variants']) && is_array($payload['variants'])) {
+                        foreach ($payload['variants'] as $v) {
+                            if (!empty($v['option'.$i])) { $hasAny = true; break; }
+                        }
+                    }
+                    if ($hasAny) { $optionNames[] = 'Option'.$i; }
+                }
+            }
+            if (empty($optionNames)) {
+                return; // no options needed
+            }
+
+            $optionsInput = [];
+            foreach ($optionNames as $idx => $name) {
+                $values = [];
+                if (!empty($payload['variants'])) {
+                    foreach ($payload['variants'] as $v) {
+                        $val = $v['option'.($idx+1)] ?? null;
+                        if ($val !== null && $val !== '') { $values[] = (string) $val; }
+                    }
+                }
+                $values = array_values(array_unique($values));
+                $optionsInput[] = [ 'name' => $name, 'values' => $values ];
+            }
+
+            $resp = $this->requestQuery(
+                $this->graphQLQueryHelper->getProductOptionsCreateMutation(),
+                [
+                    'productId' => $productId,
+                    'options' => $optionsInput,
+                    'variantStrategy' => 'CREATE',
+                ]
+            );
+            $errors = $resp['data']['productOptionsCreate']['userErrors'] ?? [];
+            if (!empty($errors)) {
+                $this->logger->notice('productOptionsCreate userErrors', ['errors' => $errors]);
+            }
+        } catch (\Throwable $e) {
+            $this->logger->notice('ensureProductOptions error (ignored)', ['exception' => $e]);
+        }
     }
 
     private function fetchExistingVariants(string $productId): array
@@ -404,17 +468,27 @@ class ShopifyWebhookConsumer implements ConsumerInterface
         if (array_key_exists('media', $payload) && is_array($payload['media']) && count($payload['media']) > 0) {
             foreach ($payload['media'] as $media) {
                 $src = $media['preview_image']['src'] ?? null;
-                if ($src && isset($existingUrls[$src])) {
-                    continue; // skip duplicate
-                }
+                if ($src && isset($existingUrls[$src])) { continue; }
                 $newMedia[] = [
                     'alt' => $media['alt'] ?? null,
-                    'mediaContentType' => $media['media_content_type'] ?? null,
+                    'mediaContentType' => 'IMAGE',
                     'originalSource' => $src,
                 ];
             }
         }
         return $newMedia;
+    }
+
+    private function mapWeightUnit(string $unit): ?string
+    {
+        $u = strtolower($unit);
+        return match ($u) {
+            'kg', 'kilograms', 'kilogram' => 'KILOGRAMS',
+            'g', 'grams', 'gram' => 'GRAMS',
+            'lb', 'lbs', 'pounds', 'pound' => 'POUNDS',
+            'oz', 'ounces', 'ounce' => 'OUNCES',
+            default => null,
+        };
     }
 
     private function normalizeTags($tags): array
@@ -433,7 +507,7 @@ class ShopifyWebhookConsumer implements ConsumerInterface
     {
         $url = $this->shopifySDK->GraphQL()->generateUrl();
         if (is_string($url)) {
-            $url = str_replace('/2022-04/', '/2022-10/', $url);
+            $url = str_replace('/2022-04/', '/2022-07/', $url);
         }
 
         return $this->shopifySDK->GraphQL()->post($query, $url, false, $variables);
