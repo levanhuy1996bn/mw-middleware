@@ -335,7 +335,10 @@ class ShopifyWebhookConsumer implements ConsumerInterface
             if (isset($node['image']['url'])) { $url = $node['image']['url']; }
             elseif (!empty($node['sources']) && is_array($node['sources'])) { $url = $node['sources'][0]['url'] ?? null; }
             elseif (!empty($node['embeddedUrl'])) { $url = $node['embeddedUrl']; }
-            if ($url) { $urls[$url] = true; }
+            if ($url) {
+                $urls[$url] = true;
+                $urls[$this->normalizeUrlKey($url)] = true;
+            }
         }
         return $urls;
     }
@@ -354,22 +357,38 @@ class ShopifyWebhookConsumer implements ConsumerInterface
 
                 if (in_array($type, ['VIDEO', 'EXTERNAL_VIDEO'], true)) {
                     if ($type === 'VIDEO') {
-                        if ($videoSrc && !isset($existingUrls[$videoSrc])) {
+                        if ($videoSrc && !$this->existingHasUrl($videoSrc, $existingUrls)) {
                             $newMedia[] = [ 'alt' => $alt, 'mediaContentType' => 'VIDEO', 'originalSource' => $videoSrc ];
                         }
                     } else { // EXTERNAL_VIDEO
-                        if ($externalVideoUrl && !isset($existingUrls[$externalVideoUrl])) {
+                        if ($externalVideoUrl && !$this->existingHasUrl($externalVideoUrl, $existingUrls)) {
                             $newMedia[] = [ 'alt' => $alt, 'mediaContentType' => 'EXTERNAL_VIDEO', 'originalSource' => $externalVideoUrl ];
                         }
                     }
                 } else { // IMAGE default
-                    if ($imageSrc && !isset($existingUrls[$imageSrc])) {
+                    if ($imageSrc && !$this->existingHasUrl($imageSrc, $existingUrls)) {
                         $newMedia[] = [ 'alt' => $alt, 'mediaContentType' => 'IMAGE', 'originalSource' => $imageSrc ];
                     }
                 }
             }
         }
         return $newMedia;
+    }
+
+    private function existingHasUrl(string $candidateUrl, array $existingUrls): bool
+    { $key = $this->normalizeUrlKey($candidateUrl); return isset($existingUrls[$candidateUrl]) || isset($existingUrls[$key]); }
+
+    private function normalizeUrlKey(string $url): string
+    {
+        $lower = strtolower($url);
+        $parts = parse_url($lower);
+        $host = $parts['host'] ?? '';
+        $path = $parts['path'] ?? '';
+        // Use basename of path to avoid size variants and signed query differences
+        $basename = basename($path);
+        if ($basename !== '' && $basename !== '/') { return $basename; }
+        // Fallback to host+path without query
+        return ($host.$path) ?: $lower;
     }
 
     private function normalizeTags($tags): array
