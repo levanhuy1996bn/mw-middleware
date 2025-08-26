@@ -136,20 +136,12 @@ class ShopifyWebhookConsumer implements ConsumerInterface
 
                 // Media
                 if ($productId) {
-                    $existingMedia = $this->fetchExistingMediaPreviewUrls($productId);
-                    list($toDeleteIds, $toCreateUrls) = $this->computeMediaDifferences($payload, $existingMedia);
-
-                    if (!empty($toDeleteIds)) {
-                        $deleteResp = $this->requestQuery($this->graphQLQueryHelper->getProductDeleteMediaMutation(), ['mediaIds' => $toDeleteIds]);
-                        $deleteErrors = $deleteResp['data']['mediaDelete']['userErrors'] ?? [];
-                        if (!empty($deleteErrors)) { $this->logger->warning('ProductMediaDelete userErrors', ['errors' => $deleteErrors]); $this->createEventTriggeredFile('PRODUCTS_UPDATE_MEDIA_DELETE_errors', json_encode($deleteErrors)); }
-                    }
-
-                    if (!empty($toCreateUrls)) {
-                        $createInput = $this->mapMediaCreateInput($payload, $existingMedia);
-                        $createResp = $this->requestQuery($this->graphQLQueryHelper->getProductCreateMediaMutation(), [ 'productId' => $productId, 'media' => $createInput ]);
-                        $createErrors = $createResp['data']['productCreateMedia']['mediaUserErrors'] ?? [];
-                        if (!empty($createErrors)) { $this->logger->warning('ProductCreateMedia userErrors', ['errors' => $createErrors]); $this->createEventTriggeredFile(($isCreate ? 'PRODUCTS_CREATE_MEDIA_errors' : 'PRODUCTS_UPDATE_MEDIA_errors'), json_encode($createErrors)); }
+                                        $existingMedia = $this->fetchExistingMediaPreviewUrls($productId);
+                    $mediaInput = $this->mapMediaCreateInput($payload, $existingMedia);
+                    if (!empty($mediaInput)) {
+                        $mediaResp = $this->requestQuery($this->graphQLQueryHelper->getProductCreateMediaMutation(), [ 'productId' => $productId, 'media' => $mediaInput ]);
+                        $mediaErrors = $mediaResp['data']['productCreateMedia']['mediaUserErrors'] ?? [];
+                        if (!empty($mediaErrors)) { $this->logger->warning('ProductCreateMedia userErrors', ['errors' => $mediaErrors]); $this->createEventTriggeredFile(($isCreate ? 'PRODUCTS_CREATE_MEDIA_errors' : 'PRODUCTS_UPDATE_MEDIA_errors'), json_encode($mediaErrors)); }
                     }
                 }
             } else {
