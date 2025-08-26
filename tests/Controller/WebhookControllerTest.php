@@ -28,7 +28,7 @@ class WebhookControllerTest extends WebTestCase
         $this->assertResponseStatusCodeSame(200);
     }
 
-    public function testWebhookShopifyWithTopic()
+    public function testWebhookShopifyWithProductsCreateTopic()
     {
         $client = static::createClient();
 
@@ -42,7 +42,7 @@ class WebhookControllerTest extends WebTestCase
 
         $client->jsonRequest('POST', '/webhook/shopify', $json, [
             'HTTP_X-SHOPIFY-EVENT-ID' => '9876543210',
-            'HTTP_X-SHOPIFY-TOPIC' => 'orders/create',
+            'HTTP_X-SHOPIFY-TOPIC' => 'products/create',
             'HTTP_X-SHOPIFY-SHOP-DOMAIN' => 'shop.example.com',
             'HTTP_X-SHOPIFY-HMAC-SHA256' => $webhookSignature,
         ]);
@@ -50,9 +50,9 @@ class WebhookControllerTest extends WebTestCase
         $this->assertResponseIsSuccessful();
         $this->assertResponseStatusCodeSame(200);
 
-        $this->assertFileExists(__DIR__.'/../../var/webhook_shopify_orders_create_event_triggered.txt');
+        $this->assertFileExists(__DIR__.'/../../var/webhook_shopify_products_create_event_triggered.txt');
 
-        unlink(__DIR__.'/../../var/webhook_shopify_orders_create_event_triggered.txt');
+        unlink(__DIR__.'/../../var/webhook_shopify_products_create_event_triggered.txt');
     }
 
     public function testWebhookShopifyInvalidSignature()
@@ -73,7 +73,7 @@ class WebhookControllerTest extends WebTestCase
         $this->assertResponseStatusCodeSame(406);
     }
 
-    public function testWebhookShopifyWithUpdatedTopicCreatesTraceFile()
+    public function testWebhookShopifyWithProductsUpdateTopicCreatesTraceFile()
     {
         $client = static::createClient();
 
@@ -87,7 +87,7 @@ class WebhookControllerTest extends WebTestCase
 
         $client->jsonRequest('POST', '/webhook/shopify', $json, [
             'HTTP_X-SHOPIFY-EVENT-ID' => 'evt-001',
-            'HTTP_X-SHOPIFY-TOPIC' => 'orders/updated',
+            'HTTP_X-SHOPIFY-TOPIC' => 'products/update',
             'HTTP_X-SHOPIFY-SHOP-DOMAIN' => 'shop.example.com',
             'HTTP_X-SHOPIFY-HMAC-SHA256' => $webhookSignature,
         ]);
@@ -95,7 +95,7 @@ class WebhookControllerTest extends WebTestCase
         $this->assertResponseIsSuccessful();
         $this->assertResponseStatusCodeSame(200);
 
-        $traceFile = __DIR__.'/../../var/webhook_shopify_orders_updated_event_triggered.txt';
+        $traceFile = __DIR__.'/../../var/webhook_shopify_products_update_event_triggered.txt';
         $this->assertFileExists($traceFile);
         unlink($traceFile);
     }
