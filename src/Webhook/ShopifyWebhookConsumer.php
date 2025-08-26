@@ -49,99 +49,63 @@ class ShopifyWebhookConsumer implements ConsumerInterface
 
         // Trace by eventId and topic for observability/tests
         $this->createEventTriggeredFile($eventId, microtime(true) . ' ||| ' . ($payload['id'] ?? ''));
-        if ($topic !== null) {
-            $this->createEventTriggeredFile($topic);
-        }
+        if ($topic !== null) { $this->createEventTriggeredFile($topic); }
 
         try {
-            switch ($topic) {
-                case ShopifyWebhookParser::EVENT_TOPICS['PRODUCTS_CREATE']:
-                    // Do NOT create the product again on a products/create webhook; product already exists in Shopify
-                    $createdProductId = $payload['admin_graphql_api_id'] ?? null;
-                    if ($createdProductId) {
-                        // Optionally update fields we care about
-                        $updateInput = $this->mapProductUpdateInput($payload);
-                        $updateResp = $this->requestQuery(
-                            $this->graphQLQueryHelper->getProductUpdateMutation(),
-                            ['input' => $updateInput]
-                        );
-                        $updateErrors = $updateResp['data']['productUpdate']['userErrors'] ?? [];
-                        if (!empty($updateErrors)) {
-                            $this->logger->warning('ProductUpdate userErrors (on create topic)', ['errors' => $updateErrors]);
-                            $this->createEventTriggeredFile('PRODUCTS_CREATE_update_errors', json_encode($updateErrors));
-                        }
+            $isCreate = ($topic === ShopifyWebhookParser::EVENT_TOPICS['PRODUCTS_CREATE']);
+            $isUpdate = ($topic === ShopifyWebhookParser::EVENT_TOPICS['PRODUCTS_UPDATE']);
+
+            if ($isCreate || $isUpdate) {
+                // Resolve an existing product by id or handle
+                $resolvedId = $this->resolveExistingProductId($payload);
+
+                if ($isCreate) {
+                    if ($resolvedId) {
+                        // Exists -> Update
+                        $input = $this->mapProductUpdateInput($payload);
+                        $input['id'] = $resolvedId;
+                        $response = $this->requestQuery($this->graphQLQueryHelper->getProductUpdateMutation(), ['input' => $input]);
+                        $errors = $response['data']['productUpdate']['userErrors'] ?? [];
+                        if (!empty($errors)) { $this->logger->warning('ProductUpdate userErrors (create routed)', ['errors' => $errors]); $this->createEventTriggeredFile('PRODUCTS_CREATE_update_errors', json_encode($errors)); }
+                        $productId = $resolvedId;
                     } else {
-                        $this->logger->notice('PRODUCTS_CREATE received without admin_graphql_api_id; skipping product mutation to avoid duplicates');
+                        // Not exists -> Create
+                        $input = $this->mapProductCreateInput($payload);
+                        $response = $this->requestQuery($this->graphQLQueryHelper->getProductCreateMutation(), ['input' => $input]);
+                        $errors = $response['data']['productCreate']['userErrors'] ?? [];
+                        if (!empty($errors)) { $this->logger->warning('ProductCreate userErrors', ['errors' => $errors]); $this->createEventTriggeredFile('PRODUCTS_CREATE_errors', json_encode($errors)); }
+                        $productId = $response['data']['productCreate']['product']['id'] ?? null;
                     }
-
-                    $calledOptionsCreate = false;
-                    if ($createdProductId && $this->shouldCreateVariants($payload)) {
-                        $calledOptionsCreate = $this->ensureProductOptions($createdProductId, $payload);
+                } else { // Update topic
+                    if ($resolvedId) {
+                        // Exists -> Update
+                        $input = $this->mapProductUpdateInput($payload);
+                        $input['id'] = $resolvedId;
+                        $response = $this->requestQuery($this->graphQLQueryHelper->getProductUpdateMutation(), ['input' => $input]);
+                        $errors = $response['data']['productUpdate']['userErrors'] ?? [];
+                        if (!empty($errors)) { $this->logger->warning('ProductUpdate userErrors', ['errors' => $errors]); $this->createEventTriggeredFile('PRODUCTS_UPDATE_errors', json_encode($errors)); }
+                        $productId = $resolvedId;
+                    } else {
+                        // Not exists -> Create
+                        $input = $this->mapProductCreateInput($payload);
+                        $response = $this->requestQuery($this->graphQLQueryHelper->getProductCreateMutation(), ['input' => $input]);
+                        $errors = $response['data']['productCreate']['userErrors'] ?? [];
+                        if (!empty($errors)) { $this->logger->warning('ProductCreate userErrors (update routed)', ['errors' => $errors]); $this->createEventTriggeredFile('PRODUCTS_UPDATE_create_errors', json_encode($errors)); }
+                        $productId = $response['data']['productCreate']['product']['id'] ?? null;
                     }
+                }
 
-                    if ($createdProductId && $this->shouldCreateVariants($payload) && !$calledOptionsCreate) {
-                        $existingVariants = $this->fetchExistingVariants($createdProductId);
-                        $numOptions = $this->fetchNumProductOptions($createdProductId);
-                        $normalized = $this->normalizeVariantsOptionsCount($payload['variants'], $numOptions);
-                        $variantsInput = $this->mapVariantsForBulkCreate($this->filterNewVariants($normalized, $existingVariants));
-                        if (!empty($variantsInput)) {
-                            $bulkResp = $this->requestQuery(
-                                $this->graphQLQueryHelper->getProductVariantsBulkCreateMutation(),
-                                [ 'productId' => $createdProductId, 'variants' => $variantsInput ]
-                            );
-                            $bulkErrors = $bulkResp['data']['productVariantsBulkCreate']['userErrors'] ?? [];
-                            if (!empty($bulkErrors)) {
-                                $this->logger->warning('VariantsBulkCreate userErrors', ['errors' => $bulkErrors]);
-                                $this->createEventTriggeredFile('PRODUCTS_CREATE_VARIANTS_errors', json_encode($bulkErrors));
-                            }
-                        }
-                    }
-
-                    // Media
-                    if ($createdProductId) {
-                        $existingMediaUrls = $this->fetchExistingMediaPreviewUrls($createdProductId);
-                        $mediaInput = $this->mapMediaCreateInput($payload, $existingMediaUrls);
-                        if (!empty($mediaInput)) {
-                            $mediaResp = $this->requestQuery(
-                                $this->graphQLQueryHelper->getProductCreateMediaMutation(),
-                                [ 'productId' => $createdProductId, 'media' => $mediaInput ]
-                            );
-                            $mediaErrors = $mediaResp['data']['productCreateMedia']['mediaUserErrors'] ?? [];
-                            if (!empty($mediaErrors)) {
-                                $this->logger->warning('ProductCreateMedia userErrors', ['errors' => $mediaErrors]);
-                                $this->createEventTriggeredFile('PRODUCTS_CREATE_MEDIA_errors', json_encode($mediaErrors));
-                            }
-                        }
-                    }
-                    break;
-
-                case ShopifyWebhookParser::EVENT_TOPICS['PRODUCTS_UPDATE']:
-                    $input = $this->mapProductUpdateInput($payload);
-                    if (empty($input['id'])) { $this->logger->warning('Skipping ProductUpdate: missing admin_graphql_api_id in payload'); break; }
-
-                    $response = $this->requestQuery(
-                        $this->graphQLQueryHelper->getProductUpdateMutation(),
-                        ['input' => $input]
-                    );
-
-                    $errors = $response['data']['productUpdate']['userErrors'] ?? [];
-                    if (!empty($errors)) { $this->logger->warning('ProductUpdate userErrors', ['errors' => $errors]); $this->createEventTriggeredFile('PRODUCTS_UPDATE_errors', json_encode($errors)); }
-
-                    if (!empty($payload['variants']) && is_array($payload['variants'])) {
-                        $productId = $input['id'];
+                // Variants flow
+                if (!empty($payload['variants']) && is_array($payload['variants']) && $productId) {
+                    if ($isUpdate) {
                         $existingVariants = $this->fetchExistingVariants($productId);
                         $payload['variants'] = $this->injectVariantIdsFromSku($payload['variants'], $existingVariants);
-
                         $updateInput = $this->mapVariantsForBulkUpdate($payload['variants']);
                         if (!empty($updateInput)) {
-                            $bulkResp = $this->requestQuery(
-                                $this->graphQLQueryHelper->getProductVariantsBulkUpdateMutation(),
-                                [ 'productId' => $productId, 'variants' => $updateInput ]
-                            );
+                            $bulkResp = $this->requestQuery($this->graphQLQueryHelper->getProductVariantsBulkUpdateMutation(), [ 'productId' => $productId, 'variants' => $updateInput ]);
                             $bulkErrors = $bulkResp['data']['productVariantsBulkUpdate']['userErrors'] ?? [];
                             if (!empty($bulkErrors)) { $this->logger->warning('VariantsBulkUpdate userErrors', ['errors' => $bulkErrors]); $this->createEventTriggeredFile('PRODUCTS_UPDATE_VARIANTS_errors', json_encode($bulkErrors)); }
                         }
-
                         $newVariants = $this->filterNewVariants($payload['variants'], $existingVariants);
                         if (!empty($newVariants)) {
                             $this->ensureProductOptions($productId, $payload);
@@ -149,32 +113,41 @@ class ShopifyWebhookConsumer implements ConsumerInterface
                             $normalized = $this->normalizeVariantsOptionsCount($newVariants, $numOptions);
                             $createInput = $this->mapVariantsForBulkCreate($normalized);
                             if (!empty($createInput)) {
-                                $bulkResp = $this->requestQuery(
-                                    $this->graphQLQueryHelper->getProductVariantsBulkCreateMutation(),
-                                    [ 'productId' => $productId, 'variants' => $createInput ]
-                                );
+                                $bulkResp = $this->requestQuery($this->graphQLQueryHelper->getProductVariantsBulkCreateMutation(), [ 'productId' => $productId, 'variants' => $createInput ]);
                                 $bulkErrors = $bulkResp['data']['productVariantsBulkCreate']['userErrors'] ?? [];
                                 if (!empty($bulkErrors)) { $this->logger->warning('VariantsBulkCreate userErrors (update)', ['errors' => $bulkErrors]); $this->createEventTriggeredFile('PRODUCTS_UPDATE_VARIANTS_CREATE_errors', json_encode($bulkErrors)); }
                             }
                         }
+                    } else { // create topic
+                        $calledOptionsCreate = $this->ensureProductOptions($productId, $payload);
+                        if (!$calledOptionsCreate) {
+                            $existingVariants = $this->fetchExistingVariants($productId);
+                            $numOptions = $this->fetchNumProductOptions($productId);
+                            $normalized = $this->normalizeVariantsOptionsCount($payload['variants'], $numOptions);
+                            $variantsInput = $this->mapVariantsForBulkCreate($this->filterNewVariants($normalized, $existingVariants));
+                            if (!empty($variantsInput)) {
+                                $bulkResp = $this->requestQuery($this->graphQLQueryHelper->getProductVariantsBulkCreateMutation(), [ 'productId' => $productId, 'variants' => $variantsInput ]);
+                                $bulkErrors = $bulkResp['data']['productVariantsBulkCreate']['userErrors'] ?? [];
+                                if (!empty($bulkErrors)) { $this->logger->warning('VariantsBulkCreate userErrors', ['errors' => $bulkErrors]); $this->createEventTriggeredFile('PRODUCTS_CREATE_VARIANTS_errors', json_encode($bulkErrors)); }
+                            }
+                        }
                     }
+                }
 
-                    $existingMediaUrls = $this->fetchExistingMediaPreviewUrls($input['id']);
-                    $mediaInputUpdate = $this->mapMediaCreateInput($payload, $existingMediaUrls);
-                    if (!empty($mediaInputUpdate)) {
-                        $mediaResp = $this->requestQuery(
-                            $this->graphQLQueryHelper->getProductCreateMediaMutation(),
-                            [ 'productId' => $input['id'], 'media' => $mediaInputUpdate ]
-                        );
+                // Media
+                if ($productId) {
+                    $existingMediaUrls = $this->fetchExistingMediaPreviewUrls($productId);
+                    $mediaInput = $this->mapMediaCreateInput($payload, $existingMediaUrls);
+                    if (!empty($mediaInput)) {
+                        $mediaResp = $this->requestQuery($this->graphQLQueryHelper->getProductCreateMediaMutation(), [ 'productId' => $productId, 'media' => $mediaInput ]);
                         $mediaErrors = $mediaResp['data']['productCreateMedia']['mediaUserErrors'] ?? [];
-                        if (!empty($mediaErrors)) { $this->logger->warning('ProductCreateMedia userErrors (update)', ['errors' => $mediaErrors]); $this->createEventTriggeredFile('PRODUCTS_UPDATE_MEDIA_errors', json_encode($mediaErrors)); }
+                        if (!empty($mediaErrors)) { $this->logger->warning('ProductCreateMedia userErrors', ['errors' => $mediaErrors]); $this->createEventTriggeredFile(($isCreate ? 'PRODUCTS_CREATE_MEDIA_errors' : 'PRODUCTS_UPDATE_MEDIA_errors'), json_encode($mediaErrors)); }
                     }
-                    break;
-
-                default:
-                    $this->logger->info('Shopify webhook topic ignored', ['topic' => $topic]);
-                    break;
+                }
+            } else {
+                $this->logger->info('Shopify webhook topic ignored', ['topic' => $topic]);
             }
+
             // Mark event processed successfully
             $this->createEventTriggeredFile($eventId.'_done');
         } catch (\Throwable $e) {
@@ -413,4 +386,20 @@ class ShopifyWebhookConsumer implements ConsumerInterface
 
     private function getEventTriggeredFileName($name = null)
     { $name = preg_replace('`[^a-zA-Z0-9_-]+`', '_', ''.$name); return 'webhook_shopify_'.$name.'_event_triggered.txt'; }
+
+    private function resolveExistingProductId(array $payload): ?string
+    {
+        // Prefer admin_graphql_api_id if present
+        if (!empty($payload['admin_graphql_api_id']) && is_string($payload['admin_graphql_api_id'])) { return $payload['admin_graphql_api_id']; }
+        // Try lookup by handle
+        $handle = $payload['handle'] ?? null;
+        if (is_string($handle) && $handle !== '') {
+            try {
+                $resp = $this->requestQuery($this->graphQLQueryHelper->getProductIdByHandleQuery(), ['handle' => $handle]);
+                $id = $resp['data']['productByHandle']['id'] ?? null;
+                if (is_string($id) && $id !== '') { return $id; }
+            } catch (\Throwable $e) { /* ignore and treat as not found */ }
+        }
+        return null;
+    }
 }
