@@ -34,6 +34,13 @@ class ShopifyWebhookConsumer implements ConsumerInterface
 
         $topic = $this->extractTopicFromEventId($eventId);
 
+        // Idempotency: skip if this event was already processed successfully
+        $doneMarkerPath = $this->getEventTriggeredFilePath($eventId.'_done');
+        if ($this->filesystem->exists($doneMarkerPath)) {
+            $this->logger->info('Duplicate Shopify webhook ignored (already processed)', [ 'event_id' => $eventId, 'topic' => $topic ]);
+            return;
+        }
+
         $this->logger->info('Received Shopify webhook', [
             'name' => $eventName,
             'event_id' => $eventId,
@@ -49,19 +56,23 @@ class ShopifyWebhookConsumer implements ConsumerInterface
         try {
             switch ($topic) {
                 case ShopifyWebhookParser::EVENT_TOPICS['PRODUCTS_CREATE']:
-                    $input = $this->mapProductCreateInput($payload);
-                    $response = $this->requestQuery(
-                        $this->graphQLQueryHelper->getProductCreateMutation(),
-                        ['input' => $input]
-                    );
-
-                    $errors = $response['data']['productCreate']['userErrors'] ?? [];
-                    if (!empty($errors)) {
-                        $this->logger->warning('ProductCreate userErrors', ['errors' => $errors]);
-                        $this->createEventTriggeredFile('PRODUCTS_CREATE_errors', json_encode($errors));
+                    // Do NOT create the product again on a products/create webhook; product already exists in Shopify
+                    $createdProductId = $payload['admin_graphql_api_id'] ?? null;
+                    if ($createdProductId) {
+                        // Optionally update fields we care about
+                        $updateInput = $this->mapProductUpdateInput($payload);
+                        $updateResp = $this->requestQuery(
+                            $this->graphQLQueryHelper->getProductUpdateMutation(),
+                            ['input' => $updateInput]
+                        );
+                        $updateErrors = $updateResp['data']['productUpdate']['userErrors'] ?? [];
+                        if (!empty($updateErrors)) {
+                            $this->logger->warning('ProductUpdate userErrors (on create topic)', ['errors' => $updateErrors]);
+                            $this->createEventTriggeredFile('PRODUCTS_CREATE_update_errors', json_encode($updateErrors));
+                        }
+                    } else {
+                        $this->logger->notice('PRODUCTS_CREATE received without admin_graphql_api_id; skipping product mutation to avoid duplicates');
                     }
-
-                    $createdProductId = $response['data']['productCreate']['product']['id'] ?? null;
 
                     $calledOptionsCreate = false;
                     if ($createdProductId && $this->shouldCreateVariants($payload)) {
@@ -164,6 +175,8 @@ class ShopifyWebhookConsumer implements ConsumerInterface
                     $this->logger->info('Shopify webhook topic ignored', ['topic' => $topic]);
                     break;
             }
+            // Mark event processed successfully
+            $this->createEventTriggeredFile($eventId.'_done');
         } catch (\Throwable $e) {
             $this->logger->error('Error processing Shopify webhook' . $e->getMessage(), [ 'event_id' => $eventId, 'topic' => $topic, 'exception' => $e ]);
         }
