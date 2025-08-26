@@ -347,6 +347,8 @@ class ShopifyWebhookConsumer implements ConsumerInterface
         foreach ($nodes as $node) {
             $url = null;
             if (isset($node['image']['url'])) { $url = $node['image']['url']; }
+            elseif (!empty($node['sources']) && is_array($node['sources'])) { $url = $node['sources'][0]['url'] ?? null; }
+            elseif (!empty($node['embeddedUrl'])) { $url = $node['embeddedUrl']; }
             if ($url) { $urls[$url] = true; }
         }
         return $urls;
@@ -357,9 +359,28 @@ class ShopifyWebhookConsumer implements ConsumerInterface
         $newMedia = [];
         if (array_key_exists('media', $payload) && is_array($payload['media']) && count($payload['media']) > 0) {
             foreach ($payload['media'] as $media) {
-                $src = $media['preview_image']['src'] ?? null;
-                if ($src && isset($existingUrls[$src])) { continue; }
-                $newMedia[] = [ 'alt' => $media['alt'] ?? null, 'mediaContentType' => 'IMAGE', 'originalSource' => $src ];
+                $type = strtoupper((string)($media['media_type'] ?? 'IMAGE'));
+                $alt = $media['alt'] ?? null;
+                // Shopify Admin REST payload usually has preview_image for images; for videos there may be src or external_url
+                $imageSrc = $media['preview_image']['src'] ?? null;
+                $videoSrc = $media['src'] ?? null; // internal video upload
+                $externalVideoUrl = $media['external_url'] ?? null; // external video (YouTube/Vimeo)
+
+                if (in_array($type, ['VIDEO', 'EXTERNAL_VIDEO'], true)) {
+                    if ($type === 'VIDEO') {
+                        if ($videoSrc && !isset($existingUrls[$videoSrc])) {
+                            $newMedia[] = [ 'alt' => $alt, 'mediaContentType' => 'VIDEO', 'originalSource' => $videoSrc ];
+                        }
+                    } else { // EXTERNAL_VIDEO
+                        if ($externalVideoUrl && !isset($existingUrls[$externalVideoUrl])) {
+                            $newMedia[] = [ 'alt' => $alt, 'mediaContentType' => 'EXTERNAL_VIDEO', 'originalSource' => $externalVideoUrl ];
+                        }
+                    }
+                } else { // IMAGE default
+                    if ($imageSrc && !isset($existingUrls[$imageSrc])) {
+                        $newMedia[] = [ 'alt' => $alt, 'mediaContentType' => 'IMAGE', 'originalSource' => $imageSrc ];
+                    }
+                }
             }
         }
         return $newMedia;

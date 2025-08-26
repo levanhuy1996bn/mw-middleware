@@ -1450,6 +1450,12 @@ class GraphQLQueryHelper
                 ... on MediaImage {
                   image { url altText }
                 }
+                ... on Video {
+                  sources { url }
+                }
+                ... on ExternalVideo {
+                  embeddedUrl
+                }
               }
             }
           }
