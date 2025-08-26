@@ -136,12 +136,20 @@ class ShopifyWebhookConsumer implements ConsumerInterface
 
                 // Media
                 if ($productId) {
-                    $existingMediaUrls = $this->fetchExistingMediaPreviewUrls($productId);
-                    $mediaInput = $this->mapMediaCreateInput($payload, $existingMediaUrls);
-                    if (!empty($mediaInput)) {
-                        $mediaResp = $this->requestQuery($this->graphQLQueryHelper->getProductCreateMediaMutation(), [ 'productId' => $productId, 'media' => $mediaInput ]);
-                        $mediaErrors = $mediaResp['data']['productCreateMedia']['mediaUserErrors'] ?? [];
-                        if (!empty($mediaErrors)) { $this->logger->warning('ProductCreateMedia userErrors', ['errors' => $mediaErrors]); $this->createEventTriggeredFile(($isCreate ? 'PRODUCTS_CREATE_MEDIA_errors' : 'PRODUCTS_UPDATE_MEDIA_errors'), json_encode($mediaErrors)); }
+                    $existingMedia = $this->fetchExistingMediaPreviewUrls($productId);
+                    list($toDeleteIds, $toCreateUrls) = $this->computeMediaDifferences($payload, $existingMedia);
+
+                    if (!empty($toDeleteIds)) {
+                        $deleteResp = $this->requestQuery($this->graphQLQueryHelper->getProductDeleteMediaMutation(), ['mediaIds' => $toDeleteIds]);
+                        $deleteErrors = $deleteResp['data']['mediaDelete']['userErrors'] ?? [];
+                        if (!empty($deleteErrors)) { $this->logger->warning('ProductMediaDelete userErrors', ['errors' => $deleteErrors]); $this->createEventTriggeredFile('PRODUCTS_UPDATE_MEDIA_DELETE_errors', json_encode($deleteErrors)); }
+                    }
+
+                    if (!empty($toCreateUrls)) {
+                        $createInput = $this->mapMediaCreateInput($payload, $existingMedia);
+                        $createResp = $this->requestQuery($this->graphQLQueryHelper->getProductCreateMediaMutation(), [ 'productId' => $productId, 'media' => $createInput ]);
+                        $createErrors = $createResp['data']['productCreateMedia']['mediaUserErrors'] ?? [];
+                        if (!empty($createErrors)) { $this->logger->warning('ProductCreateMedia userErrors', ['errors' => $createErrors]); $this->createEventTriggeredFile(($isCreate ? 'PRODUCTS_CREATE_MEDIA_errors' : 'PRODUCTS_UPDATE_MEDIA_errors'), json_encode($createErrors)); }
                     }
                 }
             } else {
@@ -335,10 +343,7 @@ class ShopifyWebhookConsumer implements ConsumerInterface
             if (isset($node['image']['url'])) { $url = $node['image']['url']; }
             elseif (!empty($node['sources']) && is_array($node['sources'])) { $url = $node['sources'][0]['url'] ?? null; }
             elseif (!empty($node['embeddedUrl'])) { $url = $node['embeddedUrl']; }
-            if ($url) {
-                $urls[$url] = true;
-                $urls[$this->normalizeUrlKey($url)] = true;
-            }
+            if ($url) { $urls[$url] = [ 'exists' => true, 'id' => ($node['id'] ?? null), 'key' => $this->normalizeUrlKey($url) ]; }
         }
         return $urls;
     }
@@ -348,8 +353,6 @@ class ShopifyWebhookConsumer implements ConsumerInterface
         $newMedia = [];
         if (array_key_exists('media', $payload) && is_array($payload['media']) && count($payload['media']) > 0) {
             foreach ($payload['media'] as $media) {
-                // Skip media items that already exist in Shopify (have graph/admin id or numeric id)
-                if (!empty($media['admin_graphql_api_id']) || !empty($media['id'])) { continue; }
                 $typeRaw = $media['media_content_type'] ?? $media['media_type'] ?? 'IMAGE';
                 $type = strtoupper((string)$typeRaw);
                 $alt = $media['alt'] ?? null;
@@ -377,6 +380,29 @@ class ShopifyWebhookConsumer implements ConsumerInterface
             }
         }
         return $newMedia;
+    }
+
+    private function computeMediaDifferences(array $payload, array $existing): array
+    {
+        $desired = [];
+        if (!empty($payload['media']) && is_array($payload['media'])) {
+            foreach ($payload['media'] as $media) {
+                $typeRaw = $media['media_content_type'] ?? $media['media_type'] ?? 'IMAGE';
+                $type = strtoupper((string)$typeRaw);
+                $url = null;
+                if ($type === 'IMAGE') { $url = $media['preview_image']['src'] ?? null; }
+                elseif ($type === 'VIDEO') { $url = $media['src'] ?? null; }
+                elseif ($type === 'EXTERNAL_VIDEO') { $url = $media['external_url'] ?? ($media['src'] ?? null); }
+                if ($url) { $desired[$this->normalizeUrlKey($url)] = $url; }
+            }
+        }
+        $existingByKey = [];
+        foreach ($existing as $exactUrl => $info) { $existingByKey[$info['key']] = [ 'url' => $exactUrl, 'id' => $info['id'] ?? null ]; }
+        $toDeleteIds = [];
+        foreach ($existingByKey as $key => $info) { if (!isset($desired[$key]) && !empty($info['id'])) { $toDeleteIds[] = $info['id']; } }
+        $toCreateUrls = [];
+        foreach ($desired as $key => $url) { if (!isset($existingByKey[$key])) { $toCreateUrls[] = $url; } }
+        return [ $toDeleteIds, $toCreateUrls ];
     }
 
     private function existingHasUrl(string $candidateUrl, array $existingUrls): bool

@@ -1400,6 +1400,28 @@ class GraphQLQueryHelper
         ';
     }
 
+    public function getProductDeleteMediaMutation(): string {
+        return '
+        mutation ProductDeleteMedia($mediaIds: [ID!]!) {
+            mediaDelete(mediaIds: $mediaIds) {
+                deletedMediaIds
+                userErrors { field message }
+            }
+        }
+        ';
+    }
+
+    public function getProductReorderMediaMutation(): string {
+        return '
+        mutation ProductReorderMedia($productId: ID!, $moves: [MoveInput!]!) {
+            productReorderMedia(productId: $productId, moves: $moves) {
+                job { id }
+                userErrors { field message }
+            }
+        }
+        ';
+    }
+
     public function getProductOptionsCreateMutation(): string {
         return '
         mutation ProductOptionsCreate($productId: ID!, $options: [ProductOptionCreateInput!]!, $variantStrategy: ProductOptionVariantStrategy) {
@@ -1445,6 +1467,7 @@ class GraphQLQueryHelper
             id
             media(first: 100) {
               nodes {
+                id
                 mediaContentType
                 alt
                 ... on MediaImage {
