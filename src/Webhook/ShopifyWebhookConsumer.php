@@ -38,6 +38,12 @@ class ShopifyWebhookConsumer implements ConsumerInterface
         ]);
         $this->createEventTriggeredFile($eventId, microtime(true) . ' ||| ' . ($payload['id'] ?? ''));
 
+        // Create a file named after the topic (e.g., orders/create -> orders_create) for visibility/tests
+        $topicNameOnly = explode('.', (string) $eventId)[0] ?? null;
+        if ($topicNameOnly) {
+            $this->createEventTriggeredFile($topicNameOnly);
+        }
+
         try {
             // Product Create
             if (stripos($eventId, ShopifyWebhookParser::EVENT_TOPICS['PRODUCTS_CREATE']) !== false) {
