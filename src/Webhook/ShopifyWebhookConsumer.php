@@ -305,22 +305,18 @@ class ShopifyWebhookConsumer implements ConsumerInterface
             if (isset($v['barcode'])) { $node['barcode'] = (string) $v['barcode']; }
             if (array_key_exists('taxable', $v)) { $node['taxable'] = (bool) $v['taxable']; }
             if (array_key_exists('requires_shipping', $v)) { $node['requiresShipping'] = (bool) $v['requires_shipping']; }
-            if (isset($v['weight'])) {
-                $node['weight'] = (float) $v['weight'];
-                if (isset($v['weight_unit'])) { $node['weightUnit'] = $this->mapWeightUnit((string) $v['weight_unit']); }
-            }
-            // Build options array from option1/2/3 in order
-            $options = [];
+            if (isset($v['tax_code'])) { $node['taxCode'] = (string) $v['tax_code']; }
+            // Build optionValues from option1/2/3 in order, names must match product options
+            $optionValues = [];
             for ($i = 1; $i <= 3; $i++) {
                 $optKey = 'option'.$i;
                 if (array_key_exists($optKey, $v) && $v[$optKey] !== null && $v[$optKey] !== '') {
-                    $options[] = (string) $v[$optKey];
+                    $optionValues[] = [ 'name' => 'Option'.($i), 'value' => (string) $v[$optKey] ];
                 }
             }
-            if (!empty($options)) {
-                $node['options'] = $options;
+            if (!empty($optionValues)) {
+                $node['optionValues'] = $optionValues;
             }
-
             if (!empty($node)) {
                 $result[] = $node;
             }
@@ -332,9 +328,7 @@ class ShopifyWebhookConsumer implements ConsumerInterface
     {
         $result = [];
         foreach ($variants as $v) {
-            if (empty($v['admin_graphql_api_id'])) {
-                continue;
-            }
+            if (empty($v['admin_graphql_api_id'])) { continue; }
             $node = ['id' => $v['admin_graphql_api_id']];
             if (isset($v['sku'])) { $node['sku'] = (string) $v['sku']; }
             if (isset($v['price'])) { $node['price'] = (string) $v['price']; }
@@ -342,10 +336,7 @@ class ShopifyWebhookConsumer implements ConsumerInterface
             if (isset($v['barcode'])) { $node['barcode'] = (string) $v['barcode']; }
             if (array_key_exists('taxable', $v)) { $node['taxable'] = (bool) $v['taxable']; }
             if (array_key_exists('requires_shipping', $v)) { $node['requiresShipping'] = (bool) $v['requires_shipping']; }
-            if (isset($v['weight'])) {
-                $node['weight'] = (float) $v['weight'];
-                if (isset($v['weight_unit'])) { $node['weightUnit'] = $this->mapWeightUnit((string) $v['weight_unit']); }
-            }
+            if (isset($v['tax_code'])) { $node['taxCode'] = (string) $v['tax_code']; }
             $result[] = $node;
         }
         return $result;
@@ -358,9 +349,7 @@ class ShopifyWebhookConsumer implements ConsumerInterface
             $optionNames = [];
             if (!empty($payload['options']) && is_array($payload['options'])) {
                 foreach ($payload['options'] as $opt) {
-                    if (!empty($opt['name'])) {
-                        $optionNames[] = (string) $opt['name'];
-                    }
+                    if (!empty($opt['name'])) { $optionNames[] = (string) $opt['name']; }
                 }
             } else {
                 for ($i = 1; $i <= 3; $i++) {
@@ -370,12 +359,10 @@ class ShopifyWebhookConsumer implements ConsumerInterface
                             if (!empty($v['option'.$i])) { $hasAny = true; break; }
                         }
                     }
-                    if ($hasAny) { $optionNames[] = 'Option'.$i; }
+                    if ($hasAny) { $optionNames[] = 'Option'.($i); }
                 }
             }
-            if (empty($optionNames)) {
-                return; // no options needed
-            }
+            if (empty($optionNames)) { return; }
 
             $optionsInput = [];
             foreach ($optionNames as $idx => $name) {
@@ -399,9 +386,7 @@ class ShopifyWebhookConsumer implements ConsumerInterface
                 ]
             );
             $errors = $resp['data']['productOptionsCreate']['userErrors'] ?? [];
-            if (!empty($errors)) {
-                $this->logger->notice('productOptionsCreate userErrors', ['errors' => $errors]);
-            }
+            if (!empty($errors)) { $this->logger->notice('productOptionsCreate userErrors', ['errors' => $errors]); }
         } catch (\Throwable $e) {
             $this->logger->notice('ensureProductOptions error (ignored)', ['exception' => $e]);
         }
@@ -414,9 +399,7 @@ class ShopifyWebhookConsumer implements ConsumerInterface
         $bySku = [];
         foreach ($nodes as $node) {
             $sku = $node['sku'] ?? null;
-            if ($sku) {
-                $bySku[$sku] = $node;
-            }
+            if ($sku) { $bySku[$sku] = $node; }
         }
         return $bySku;
     }
@@ -426,9 +409,7 @@ class ShopifyWebhookConsumer implements ConsumerInterface
         foreach ($variants as &$v) {
             if (empty($v['admin_graphql_api_id']) && !empty($v['sku'])) {
                 $sku = (string) $v['sku'];
-                if (!empty($existingBySku[$sku]['id'])) {
-                    $v['admin_graphql_api_id'] = $existingBySku[$sku]['id'];
-                }
+                if (!empty($existingBySku[$sku]['id'])) { $v['admin_graphql_api_id'] = $existingBySku[$sku]['id']; }
             }
         }
         unset($v);
@@ -440,9 +421,7 @@ class ShopifyWebhookConsumer implements ConsumerInterface
         $result = [];
         foreach ($variants as $v) {
             $sku = $v['sku'] ?? null;
-            if ($sku && isset($existingBySku[$sku])) {
-                continue;
-            }
+            if ($sku && isset($existingBySku[$sku])) { continue; }
             $result[] = $v;
         }
         return $result;
@@ -455,9 +434,7 @@ class ShopifyWebhookConsumer implements ConsumerInterface
         $urls = [];
         foreach ($nodes as $node) {
             $url = $node['previewImage']['url'] ?? null;
-            if ($url) {
-                $urls[$url] = true;
-            }
+            if ($url) { $urls[$url] = true; }
         }
         return $urls;
     }
@@ -469,47 +446,23 @@ class ShopifyWebhookConsumer implements ConsumerInterface
             foreach ($payload['media'] as $media) {
                 $src = $media['preview_image']['src'] ?? null;
                 if ($src && isset($existingUrls[$src])) { continue; }
-                $newMedia[] = [
-                    'alt' => $media['alt'] ?? null,
-                    'mediaContentType' => 'IMAGE',
-                    'originalSource' => $src,
-                ];
+                $newMedia[] = [ 'alt' => $media['alt'] ?? null, 'mediaContentType' => 'IMAGE', 'originalSource' => $src ];
             }
         }
         return $newMedia;
     }
 
-    private function mapWeightUnit(string $unit): ?string
-    {
-        $u = strtolower($unit);
-        return match ($u) {
-            'kg', 'kilograms', 'kilogram' => 'KILOGRAMS',
-            'g', 'grams', 'gram' => 'GRAMS',
-            'lb', 'lbs', 'pounds', 'pound' => 'POUNDS',
-            'oz', 'ounces', 'ounce' => 'OUNCES',
-            default => null,
-        };
-    }
-
     private function normalizeTags($tags): array
     {
-        if (is_array($tags)) {
-            return array_values(array_filter(array_map('strval', $tags), static fn($t) => $t !== ''));
-        }
-        if (is_string($tags)) {
-            $parts = array_map('trim', explode(',', $tags));
-            return array_values(array_filter($parts, static fn($t) => $t !== ''));
-        }
+        if (is_array($tags)) { return array_values(array_filter(array_map('strval', $tags), static fn($t) => $t !== '')); }
+        if (is_string($tags)) { $parts = array_map('trim', explode(',', $tags)); return array_values(array_filter($parts, static fn($t) => $t !== '')); }
         return [];
     }
 
     private function requestQuery($query, $variables)
     {
         $url = $this->shopifySDK->GraphQL()->generateUrl();
-        if (is_string($url)) {
-            $url = str_replace('/2022-04/', '/2022-07/', $url);
-        }
-
+        if (is_string($url)) { $url = str_replace('/2022-04/', '/2022-07/', $url); }
         return $this->shopifySDK->GraphQL()->post($query, $url, false, $variables);
     }
 
@@ -517,20 +470,13 @@ class ShopifyWebhookConsumer implements ConsumerInterface
     {
         try {
             $filepath = $this->getEventTriggeredFilePath($name);
-            if ($this->filesystem->exists($filepath)) {
-                $this->filesystem->appendToFile($filepath, ($line ?? '').\PHP_EOL);
-            } else {
-                $this->filesystem->dumpFile($filepath, ($line ?? '').\PHP_EOL);
-            }
-        } catch (\Exception $e) {
-            // no-op
-        }
+            if ($this->filesystem->exists($filepath)) { $this->filesystem->appendToFile($filepath, ($line ?? '').\PHP_EOL); }
+            else { $this->filesystem->dumpFile($filepath, ($line ?? '').\PHP_EOL); }
+        } catch (\Exception $e) { /* no-op */ }
     }
 
     private function getEventTriggeredFilePath($name = null)
-    {
-        return __DIR__.'/../../var/'.$this->getEventTriggeredFileName($name);
-    }
+    { return __DIR__.'/../../var/'.$this->getEventTriggeredFileName($name); }
 
     private function getEventTriggeredFileName($name = null)
     {
