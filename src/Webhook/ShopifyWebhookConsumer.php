@@ -30,154 +30,272 @@ class ShopifyWebhookConsumer implements ConsumerInterface
     public function consume(RemoteEvent $event): void
     {
         $payload = $event->getPayload();
-        $eventId = $event->getId();
+        $eventId = (string) $event->getId(); // format: <topic>.<domain>.<webhook-id>
         $eventName = $event->getName();
 
-        $this->logger->info(sprintf('Received Shopify webhook event: "%s"', $eventName), [
-            'webhook_id' => $event->getId(),
+        $topic = $this->extractTopicFromEventId($eventId);
+
+        $this->logger->info('Received Shopify webhook', [
+            'name' => $eventName,
+            'event_id' => $eventId,
+            'topic' => $topic,
         ]);
+
+        // Ghi dấu vết theo eventId và theo topic để phục vụ test/quan sát
         $this->createEventTriggeredFile($eventId, microtime(true) . ' ||| ' . ($payload['id'] ?? ''));
+        if ($topic !== null) {
+            $this->createEventTriggeredFile($topic);
+        }
 
         try {
-            // Product Create
-            if (stripos($eventId, ShopifyWebhookParser::EVENT_TOPICS['PRODUCTS_CREATE']) !== false) {
-                [$productData, $newMedia] = $this->prepareProductData($payload, true);
-                $this->createEventTriggeredFile('PRODUCTS_CREATE_errors', json_encode($productData));
-                $response = $this->requestQuery(
-                    $this->graphQLQueryHelper->getProductCreateMutation(),
-                    ['input' => $productData,
-                     'media' => $newMedia,
-                    ]
-                );
+            switch ($topic) {
+                case ShopifyWebhookParser::EVENT_TOPICS['PRODUCTS_CREATE']:
+                    $input = $this->mapProductCreateInput($payload);
+                    $response = $this->requestQuery(
+                        $this->graphQLQueryHelper->getProductCreateMutation(),
+                        ['input' => $input]
+                    );
 
-                $errors = $response['data']['productCreate']['userErrors'] ?? [];
+                    $errors = $response['data']['productCreate']['userErrors'] ?? [];
+                    if (!empty($errors)) {
+                        $this->logger->warning('ProductCreate userErrors', ['errors' => $errors]);
+                        $this->createEventTriggeredFile('PRODUCTS_CREATE_errors', json_encode($errors));
+                    }
 
-                if (count($errors)) {
-                    $this->createEventTriggeredFile('PRODUCTS_CREATE_errors', json_encode($errors));
-                } else {
-                    $this->createEventTriggeredFile($eventId, microtime(true) . ' ||| ' . ($payload['id'] ?? ''));
-                }
+                    // Nếu có variants trong payload REST, tạo variants sau khi product được tạo
+                    $createdProductId = $response['data']['productCreate']['product']['id'] ?? null;
+                    if ($createdProductId && !empty($payload['variants']) && is_array($payload['variants'])) {
+                        $variantsInput = $this->mapVariantsForBulkCreate($payload['variants']);
+                        if (!empty($variantsInput)) {
+                            $bulkResp = $this->requestQuery(
+                                $this->graphQLQueryHelper->getProductVariantsBulkCreateMutation(),
+                                [
+                                    'productId' => $createdProductId,
+                                    'variants' => $variantsInput,
+                                ]
+                            );
+                            $bulkErrors = $bulkResp['data']['productVariantsBulkCreate']['userErrors'] ?? [];
+                            if (!empty($bulkErrors)) {
+                                $this->logger->warning('VariantsBulkCreate userErrors', ['errors' => $bulkErrors]);
+                                $this->createEventTriggeredFile('PRODUCTS_CREATE_VARIANTS_errors', json_encode($bulkErrors));
+                            }
+                        }
+                    }
+                    break;
+
+                case ShopifyWebhookParser::EVENT_TOPICS['PRODUCTS_UPDATE']:
+                    $input = $this->mapProductUpdateInput($payload);
+
+                    if (empty($input['id'])) {
+                        $this->logger->warning('Skipping ProductUpdate: missing admin_graphql_api_id in payload');
+                        break;
+                    }
+
+                    $response = $this->requestQuery(
+                        $this->graphQLQueryHelper->getProductUpdateMutation(),
+                        ['input' => $input]
+                    );
+
+                    $errors = $response['data']['productUpdate']['userErrors'] ?? [];
+                    if (!empty($errors)) {
+                        $this->logger->warning('ProductUpdate userErrors', ['errors' => $errors]);
+                        $this->createEventTriggeredFile('PRODUCTS_UPDATE_errors', json_encode($errors));
+                    }
+
+                    // Cập nhật variants nếu có trong payload
+                    if (!empty($payload['variants']) && is_array($payload['variants'])) {
+                        $productId = $input['id'];
+                        $variantsInput = $this->mapVariantsForBulkUpdate($payload['variants']);
+                        if (!empty($variantsInput)) {
+                            $bulkResp = $this->requestQuery(
+                                $this->graphQLQueryHelper->getProductVariantsBulkUpdateMutation(),
+                                [
+                                    'productId' => $productId,
+                                    'variants' => $variantsInput,
+                                ]
+                            );
+                            $bulkErrors = $bulkResp['data']['productVariantsBulkUpdate']['userErrors'] ?? [];
+                            if (!empty($bulkErrors)) {
+                                $this->logger->warning('VariantsBulkUpdate userErrors', ['errors' => $bulkErrors]);
+                                $this->createEventTriggeredFile('PRODUCTS_UPDATE_VARIANTS_errors', json_encode($bulkErrors));
+                            }
+                        }
+                    }
+                    break;
+
+                default:
+                    $this->logger->info('Shopify webhook topic ignored', ['topic' => $topic]);
+                    break;
             }
-
-            // Product Update
-            if (stripos($eventId, ShopifyWebhookParser::EVENT_TOPICS['PRODUCTS_UPDATE']) !== false) {
-                [$productData, $newMedia] = $this->prepareProductData($payload, false);
-                $response = $this->requestQuery(
-                    $this->graphQLQueryHelper->getProductUpdateMutation(),
-                    [
-                        'input' => $productData,
-                        'media' => $newMedia,
-                    ]
-                );
-
-                $errors = $response['data']['productUpdate']['userErrors'] ?? [];
-
-                if (count($errors)) {
-                    $this->createEventTriggeredFile('PRODUCTS_UPDATE_errors', json_encode($errors));
-                } else {
-                    $this->createEventTriggeredFile($eventId, microtime(true) . ' ||| ' . ($payload['id'] ?? ''));
-                }
-            }
-        } catch (\Exception $e) {
-            $this->logger->error(sprintf('Error processing Shopify webhook event "%s": %s', $eventName, $e->getMessage()), [
+        } catch (\Throwable $e) {
+            $this->logger->error('Error processing Shopify webhook', [
+                'event_id' => $eventId,
+                'topic' => $topic,
                 'exception' => $e,
-                'payload' => $payload,
             ]);
         }
     }
 
-    private function prepareProductData(array $payload, $isCreated): array
+    private function extractTopicFromEventId(string $eventId): ?string
     {
+        $firstDot = strpos($eventId, '.');
+        if ($firstDot === false) {
+            return null;
+        }
+        return substr($eventId, 0, $firstDot);
+    }
+
+    private function mapProductCreateInput(array $payload): array
+    {
+        $input = [];
+
+        if (isset($payload['title'])) {
+            $input['title'] = (string) $payload['title'];
+        }
+
         if (array_key_exists('body_html', $payload)) {
-            $payload['descriptionHtml'] = $payload['body_html'];
-            unset($payload['body_html']);
-        } else {
-            $payload['descriptionHtml'] = null;
+            $input['descriptionHtml'] = $payload['body_html'] ?? null;
+        }
+
+        if (array_key_exists('vendor', $payload)) {
+            $input['vendor'] = $payload['vendor'];
         }
 
         if (array_key_exists('product_type', $payload)) {
-            $payload['productType'] = $payload['product_type'];
-            unset($payload['product_type']);
+            $input['productType'] = $payload['product_type'];
         }
 
-        if (array_key_exists('status', $payload)) {
-            $payload['status'] = strtoupper($payload['status']);
+        if (array_key_exists('status', $payload) && is_string($payload['status'])) {
+            $input['status'] = strtoupper($payload['status']);
         }
 
-        if (array_key_exists('admin_graphql_api_id', $payload)) {
-            if(!$isCreated) {
-                $payload['product']['id'] = $payload['admin_graphql_api_id'];
-            }
-            unset($payload['admin_graphql_api_id']);
-        }
-
-        if (array_key_exists('updated_at', $payload)) {
-            unset($payload['updated_at']);
-        }
-
-        if (array_key_exists('image', $payload)) {
-            unset($payload['image']);
-        }
-
-        if (array_key_exists('id', $payload)) {
-            unset($payload['id']);
-        }
-
-        if (array_key_exists('created_at', $payload)) {
-            unset($payload['created_at']);
-        }
-
-        if (array_key_exists('published_at', $payload)) {
-            unset($payload['published_at']);
+        if (array_key_exists('tags', $payload)) {
+            $input['tags'] = $this->normalizeTags($payload['tags']);
         }
 
         if (array_key_exists('template_suffix', $payload)) {
-            $payload['templateSuffix'] = $payload['template_suffix'];
-            unset($payload['template_suffix']);
+            $input['templateSuffix'] = $payload['template_suffix'];
         }
 
-        if (array_key_exists('published_scope', $payload)) {
-            unset($payload['published_scope']);
+        return $input;
+    }
+
+    private function mapProductUpdateInput(array $payload): array
+    {
+        $input = [];
+
+        if (!empty($payload['admin_graphql_api_id'])) {
+            $input['id'] = $payload['admin_graphql_api_id'];
         }
 
-        if (array_key_exists('images', $payload)) {
-            unset($payload['images']);
+        if (isset($payload['title'])) {
+            $input['title'] = (string) $payload['title'];
         }
 
-        if (array_key_exists('has_variants_that_requires_components', $payload)) {
-            unset($payload['has_variants_that_requires_components']);
+        if (array_key_exists('body_html', $payload)) {
+            $input['descriptionHtml'] = $payload['body_html'] ?? null;
         }
 
-        if (array_key_exists('variant_gids', $payload)) {
-            unset($payload['variant_gids']);
+        if (array_key_exists('vendor', $payload)) {
+            $input['vendor'] = $payload['vendor'];
         }
 
-        if (array_key_exists('variants', $payload)) {
-            unset($payload['variants']);
+        if (array_key_exists('product_type', $payload)) {
+            $input['productType'] = $payload['product_type'];
         }
 
-        if (array_key_exists('options', $payload)) {
-            unset($payload['options']);
+        if (array_key_exists('status', $payload) && is_string($payload['status'])) {
+            $input['status'] = strtoupper($payload['status']);
         }
 
-        $newMedia = [];
+        if (array_key_exists('tags', $payload)) {
+            $input['tags'] = $this->normalizeTags($payload['tags']);
+        }
 
-        if(array_key_exists('media', $payload) && count($payload['media']) > 0) {
-            foreach ($payload['media'] as $media) {
-                $newMedia[] = [
-                    'alt' => $media['alt'] ?? null,
-                    'mediaContentType' => $media['media_content_type'] ?? null,
-                    'originalSource' => $media['preview_image']['src'] ?? null,
-                ];
+        if (array_key_exists('template_suffix', $payload)) {
+            $input['templateSuffix'] = $payload['template_suffix'];
+        }
+
+        return $input;
+    }
+
+    private function mapVariantsForBulkCreate(array $variants): array
+    {
+        $result = [];
+        foreach ($variants as $v) {
+            $node = [];
+            if (isset($v['sku'])) { $node['sku'] = (string) $v['sku']; }
+            if (isset($v['title'])) { $node['title'] = (string) $v['title']; }
+            if (isset($v['price'])) { $node['price'] = (string) $v['price']; }
+            if (isset($v['compare_at_price'])) { $node['compareAtPrice'] = (string) $v['compare_at_price']; }
+            if (isset($v['barcode'])) { $node['barcode'] = (string) $v['barcode']; }
+            if (isset($v['tax_code'])) { $node['taxCode'] = (string) $v['tax_code']; }
+            if (isset($v['weight'])) {
+                $node['weight'] = (float) $v['weight'];
+                if (isset($v['weight_unit'])) { $node['weightUnit'] = (string) strtoupper($v['weight_unit']); }
+            }
+            // selectedOptions từ REST: option1/option2/option3
+            $selectedOptions = [];
+            for ($i = 1; $i <= 3; $i++) {
+                $optKey = 'option'.$i;
+                if (!empty($v[$optKey])) {
+                    $selectedOptions[] = [
+                        'name' => 'option'.$i,
+                        'value' => (string) $v[$optKey],
+                    ];
+                }
+            }
+            if (!empty($selectedOptions)) {
+                $node['selectedOptions'] = $selectedOptions;
             }
 
-            unset($payload['media']);
+            if (!empty($node)) {
+                $result[] = $node;
+            }
         }
+        return $result;
+    }
 
-        $payload['category'] = null;
-//        $payload['category'] = $payload['category']['admin_graphql_api_id'] ?? null;
+    private function mapVariantsForBulkUpdate(array $variants): array
+    {
+        $result = [];
+        foreach ($variants as $v) {
+            $node = [];
+            // Yêu cầu có id GraphQL của variant để update; nếu REST gửi admin_graphql_api_id cho variant, dùng nó
+            if (!empty($v['admin_graphql_api_id'])) {
+                $node['id'] = $v['admin_graphql_api_id'];
+            } elseif (!empty($v['id'])) {
+                // Nếu chỉ có id số (REST), KHÔNG đủ để gọi GraphQL update — bỏ qua để tránh lỗi
+                continue;
+            } else {
+                continue;
+            }
 
-        return [$payload, $newMedia];
+            if (isset($v['sku'])) { $node['sku'] = (string) $v['sku']; }
+            if (isset($v['title'])) { $node['title'] = (string) $v['title']; }
+            if (isset($v['price'])) { $node['price'] = (string) $v['price']; }
+            if (isset($v['compare_at_price'])) { $node['compareAtPrice'] = (string) $v['compare_at_price']; }
+            if (isset($v['barcode'])) { $node['barcode'] = (string) $v['barcode']; }
+            if (isset($v['tax_code'])) { $node['taxCode'] = (string) $v['tax_code']; }
+            if (isset($v['weight'])) {
+                $node['weight'] = (float) $v['weight'];
+                if (isset($v['weight_unit'])) { $node['weightUnit'] = (string) strtoupper($v['weight_unit']); }
+            }
+            $result[] = $node;
+        }
+        return $result;
+    }
+
+    private function normalizeTags($tags): array
+    {
+        if (is_array($tags)) {
+            return array_values(array_filter(array_map('strval', $tags), static fn($t) => $t !== ''));
+        }
+        if (is_string($tags)) {
+            $parts = array_map('trim', explode(',', $tags));
+            return array_values(array_filter($parts, static fn($t) => $t !== ''));
+        }
+        return [];
     }
 
     private function requestQuery($query, $variables)
@@ -200,7 +318,7 @@ class ShopifyWebhookConsumer implements ConsumerInterface
                 $this->filesystem->dumpFile($filepath, ($line ?? '').\PHP_EOL);
             }
         } catch (\Exception $e) {
-            // do nothing
+            // no-op
         }
     }
 
@@ -212,7 +330,6 @@ class ShopifyWebhookConsumer implements ConsumerInterface
     private function getEventTriggeredFileName($name = null)
     {
         $name = preg_replace('`[^a-zA-Z0-9_-]+`', '_', ''.$name);
-
-        return 'webhook_shopify_'.$name.'_event_triggered.txt';
+        return 'webhook_shopify_'.$name+'_event_triggered.txt';
     }
 }
