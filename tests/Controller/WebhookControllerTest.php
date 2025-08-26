@@ -50,9 +50,13 @@ class WebhookControllerTest extends WebTestCase
         $this->assertResponseIsSuccessful();
         $this->assertResponseStatusCodeSame(200);
 
+        // Topic trace file
         $this->assertFileExists(__DIR__.'/../../var/webhook_shopify_products_create_event_triggered.txt');
-
         unlink(__DIR__.'/../../var/webhook_shopify_products_create_event_triggered.txt');
+
+        // EventId trace file: sanitize("products/create.shop.example.com.9876543210") -> products_create_shop_example_com_9876543210
+        $this->assertFileExists(__DIR__.'/../../var/webhook_shopify_products_create_shop_example_com_9876543210_event_triggered.txt');
+        unlink(__DIR__.'/../../var/webhook_shopify_products_create_shop_example_com_9876543210_event_triggered.txt');
     }
 
     public function testWebhookShopifyInvalidSignature()
@@ -95,8 +99,14 @@ class WebhookControllerTest extends WebTestCase
         $this->assertResponseIsSuccessful();
         $this->assertResponseStatusCodeSame(200);
 
+        // Topic trace file
         $traceFile = __DIR__.'/../../var/webhook_shopify_products_update_event_triggered.txt';
         $this->assertFileExists($traceFile);
         unlink($traceFile);
+
+        // EventId trace file: sanitize("products/update.shop.example.com.evt-001") -> products_update_shop_example_com_evt_001
+        $eventTrace = __DIR__.'/../../var/webhook_shopify_products_update_shop_example_com_evt_001_event_triggered.txt';
+        $this->assertFileExists($eventTrace);
+        unlink($eventTrace);
     }
 }
