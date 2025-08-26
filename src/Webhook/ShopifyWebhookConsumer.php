@@ -348,12 +348,14 @@ class ShopifyWebhookConsumer implements ConsumerInterface
         $newMedia = [];
         if (array_key_exists('media', $payload) && is_array($payload['media']) && count($payload['media']) > 0) {
             foreach ($payload['media'] as $media) {
-                $type = strtoupper((string)($media['media_type'] ?? 'IMAGE'));
+                $typeRaw = $media['media_content_type'] ?? $media['media_type'] ?? 'IMAGE';
+                $type = strtoupper((string)$typeRaw);
                 $alt = $media['alt'] ?? null;
                 // Shopify Admin REST payload usually has preview_image for images; for videos there may be src or external_url
                 $imageSrc = $media['preview_image']['src'] ?? null;
                 $videoSrc = $media['src'] ?? null; // internal video upload
-                $externalVideoUrl = $media['external_url'] ?? null; // external video (YouTube/Vimeo)
+                // For EXTERNAL_VIDEO, some payloads use external_url, others use src
+                $externalVideoUrl = $media['external_url'] ?? ($type === 'EXTERNAL_VIDEO' ? ($media['src'] ?? null) : null);
 
                 if (in_array($type, ['VIDEO', 'EXTERNAL_VIDEO'], true)) {
                     if ($type === 'VIDEO') {
