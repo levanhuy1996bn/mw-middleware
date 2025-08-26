@@ -134,16 +134,7 @@ class ShopifyWebhookConsumer implements ConsumerInterface
                     }
                 }
 
-                // Media: only on update add missing media by URL; skip on create to avoid duplicates (Shopify already created them)
-                if ($productId && $isUpdate) {
-                    $existingMedia = $this->fetchExistingMediaPreviewUrls($productId);
-                    $mediaInput = $this->mapMediaCreateInput($payload, $existingMedia);
-                    if (!empty($mediaInput)) {
-                        $mediaResp = $this->requestQuery($this->graphQLQueryHelper->getProductCreateMediaMutation(), [ 'productId' => $productId, 'media' => $mediaInput ]);
-                        $mediaErrors = $mediaResp['data']['productCreateMedia']['mediaUserErrors'] ?? [];
-                        if (!empty($mediaErrors)) { $this->logger->warning('ProductCreateMedia userErrors', ['errors' => $mediaErrors]); $this->createEventTriggeredFile('PRODUCTS_UPDATE_MEDIA_errors', json_encode($mediaErrors)); }
-                    }
-                }
+
             } else {
                 $this->logger->info('Shopify webhook topic ignored', ['topic' => $topic]);
             }
@@ -326,92 +317,19 @@ class ShopifyWebhookConsumer implements ConsumerInterface
     }
 
     private function fetchExistingMediaPreviewUrls(string $productId): array
-    {
-        $resp = $this->requestQuery($this->graphQLQueryHelper->getProductMediaForQuery(), ['productId' => $productId]);
-        $nodes = $resp['data']['product']['media']['nodes'] ?? [];
-        $urls = [];
-        foreach ($nodes as $node) {
-            $url = null;
-            if (isset($node['image']['url'])) { $url = $node['image']['url']; }
-            elseif (!empty($node['sources']) && is_array($node['sources'])) { $url = $node['sources'][0]['url'] ?? null; }
-            elseif (!empty($node['embeddedUrl'])) { $url = $node['embeddedUrl']; }
-            if ($url) { $urls[$url] = [ 'exists' => true, 'id' => ($node['id'] ?? null), 'key' => $this->normalizeUrlKey($url) ]; }
-        }
-        return $urls;
-    }
+    { return []; }
 
     private function mapMediaCreateInput(array $payload, array $existingUrls = []): array
-    {
-        $newMedia = [];
-        if (array_key_exists('media', $payload) && is_array($payload['media']) && count($payload['media']) > 0) {
-            foreach ($payload['media'] as $media) {
-                $typeRaw = $media['media_content_type'] ?? $media['media_type'] ?? 'IMAGE';
-                $type = strtoupper((string)$typeRaw);
-                $alt = $media['alt'] ?? null;
-                // Shopify Admin REST payload usually has preview_image for images; for videos there may be src or external_url
-                $imageSrc = $media['preview_image']['src'] ?? null;
-                $videoSrc = $media['src'] ?? null; // internal video upload
-                // For EXTERNAL_VIDEO, some payloads use external_url, others use src
-                $externalVideoUrl = $media['external_url'] ?? ($type === 'EXTERNAL_VIDEO' ? ($media['src'] ?? null) : null);
-
-                if (in_array($type, ['VIDEO', 'EXTERNAL_VIDEO'], true)) {
-                    if ($type === 'VIDEO') {
-                        if ($videoSrc && !$this->existingHasUrl($videoSrc, $existingUrls)) {
-                            $newMedia[] = [ 'alt' => $alt, 'mediaContentType' => 'VIDEO', 'originalSource' => $videoSrc ];
-                        }
-                    } else { // EXTERNAL_VIDEO
-                        if ($externalVideoUrl && !$this->existingHasUrl($externalVideoUrl, $existingUrls)) {
-                            $newMedia[] = [ 'alt' => $alt, 'mediaContentType' => 'EXTERNAL_VIDEO', 'originalSource' => $externalVideoUrl ];
-                        }
-                    }
-                } else { // IMAGE default
-                    if ($imageSrc && !$this->existingHasUrl($imageSrc, $existingUrls)) {
-                        $newMedia[] = [ 'alt' => $alt, 'mediaContentType' => 'IMAGE', 'originalSource' => $imageSrc ];
-                    }
-                }
-            }
-        }
-        return $newMedia;
-    }
+    { return []; }
 
     private function computeMediaDifferences(array $payload, array $existing): array
-    {
-        $desired = [];
-        if (!empty($payload['media']) && is_array($payload['media'])) {
-            foreach ($payload['media'] as $media) {
-                $typeRaw = $media['media_content_type'] ?? $media['media_type'] ?? 'IMAGE';
-                $type = strtoupper((string)$typeRaw);
-                $url = null;
-                if ($type === 'IMAGE') { $url = $media['preview_image']['src'] ?? null; }
-                elseif ($type === 'VIDEO') { $url = $media['src'] ?? null; }
-                elseif ($type === 'EXTERNAL_VIDEO') { $url = $media['external_url'] ?? ($media['src'] ?? null); }
-                if ($url) { $desired[$this->normalizeUrlKey($url)] = $url; }
-            }
-        }
-        $existingByKey = [];
-        foreach ($existing as $exactUrl => $info) { $existingByKey[$info['key']] = [ 'url' => $exactUrl, 'id' => $info['id'] ?? null ]; }
-        $toDeleteIds = [];
-        foreach ($existingByKey as $key => $info) { if (!isset($desired[$key]) && !empty($info['id'])) { $toDeleteIds[] = $info['id']; } }
-        $toCreateUrls = [];
-        foreach ($desired as $key => $url) { if (!isset($existingByKey[$key])) { $toCreateUrls[] = $url; } }
-        return [ $toDeleteIds, $toCreateUrls ];
-    }
+    { return [[], []]; }
 
     private function existingHasUrl(string $candidateUrl, array $existingUrls): bool
-    { $key = $this->normalizeUrlKey($candidateUrl); return isset($existingUrls[$candidateUrl]) || isset($existingUrls[$key]); }
+    { return false; }
 
     private function normalizeUrlKey(string $url): string
-    {
-        $lower = strtolower($url);
-        $parts = parse_url($lower);
-        $host = $parts['host'] ?? '';
-        $path = $parts['path'] ?? '';
-        // Use basename of path to avoid size variants and signed query differences
-        $basename = basename($path);
-        if ($basename !== '' && $basename !== '/') { return $basename; }
-        // Fallback to host+path without query
-        return ($host.$path) ?: $lower;
-    }
+    { return ''; }
 
     private function normalizeTags($tags): array
     { if (is_array($tags)) { return array_values(array_filter(array_map('strval', $tags), static fn($t) => $t !== '')); } if (is_string($tags)) { $parts = array_map('trim', explode(',', $tags)); return array_values(array_filter($parts, static fn($t) => $t !== '')); } return []; }
