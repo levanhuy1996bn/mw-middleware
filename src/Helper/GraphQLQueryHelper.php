@@ -1400,6 +1400,27 @@ class GraphQLQueryHelper
         ';
     }
 
+    public function getProductOptionsCreateMutation(): string {
+        return '
+        mutation ProductOptionsCreate($productId: ID!, $options: [ProductOptionCreateInput!]!, $variantStrategy: ProductOptionVariantStrategy) {
+            productOptionsCreate(productId: $productId, options: $options, variantStrategy: $variantStrategy) {
+                product { id }
+                userErrors { field message }
+            }
+        }
+        ';
+    }
+
+    public function getProductIdByHandleQuery(): string {
+        return '
+        query ProductIdByHandle($handle: String!) {
+          productByHandle(handle: $handle) {
+            id
+          }
+        }
+        ';
+    }
+
     public function getProductVariantsForQuery(): string {
         return '
         query ProductVariants($productId: ID!) {
