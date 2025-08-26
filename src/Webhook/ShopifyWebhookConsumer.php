@@ -62,10 +62,12 @@ class ShopifyWebhookConsumer implements ConsumerInterface
                         $this->createEventTriggeredFile('PRODUCTS_CREATE_errors', json_encode($errors));
                     }
 
-                    // Nếu có variants trong payload REST, tạo variants sau khi product được tạo
                     $createdProductId = $response['data']['productCreate']['product']['id'] ?? null;
+
+                    // Dedup và tạo variants mới nếu có
                     if ($createdProductId && !empty($payload['variants']) && is_array($payload['variants'])) {
-                        $variantsInput = $this->mapVariantsForBulkCreate($payload['variants']);
+                        $existingVariants = $this->fetchExistingVariants($createdProductId);
+                        $variantsInput = $this->mapVariantsForBulkCreate($this->filterNewVariants($payload['variants'], $existingVariants));
                         if (!empty($variantsInput)) {
                             $bulkResp = $this->requestQuery(
                                 $this->graphQLQueryHelper->getProductVariantsBulkCreateMutation(),
@@ -78,6 +80,26 @@ class ShopifyWebhookConsumer implements ConsumerInterface
                             if (!empty($bulkErrors)) {
                                 $this->logger->warning('VariantsBulkCreate userErrors', ['errors' => $bulkErrors]);
                                 $this->createEventTriggeredFile('PRODUCTS_CREATE_VARIANTS_errors', json_encode($bulkErrors));
+                            }
+                        }
+                    }
+
+                    // Dedup media và chỉ tạo media mới
+                    if ($createdProductId) {
+                        $existingMediaUrls = $this->fetchExistingMediaPreviewUrls($createdProductId);
+                        $mediaInput = $this->mapMediaCreateInput($payload, $existingMediaUrls);
+                        if (!empty($mediaInput)) {
+                            $mediaResp = $this->requestQuery(
+                                $this->graphQLQueryHelper->getProductCreateMediaMutation(),
+                                [
+                                    'productId' => $createdProductId,
+                                    'media' => $mediaInput,
+                                ]
+                            );
+                            $mediaErrors = $mediaResp['data']['productCreateMedia']['mediaUserErrors'] ?? [];
+                            if (!empty($mediaErrors)) {
+                                $this->logger->warning('ProductCreateMedia userErrors', ['errors' => $mediaErrors]);
+                                $this->createEventTriggeredFile('PRODUCTS_CREATE_MEDIA_errors', json_encode($mediaErrors));
                             }
                         }
                     }
@@ -102,16 +124,21 @@ class ShopifyWebhookConsumer implements ConsumerInterface
                         $this->createEventTriggeredFile('PRODUCTS_UPDATE_errors', json_encode($errors));
                     }
 
-                    // Cập nhật variants nếu có trong payload
+                    // Cập nhật / tạo mới variants dựa trên dedup
                     if (!empty($payload['variants']) && is_array($payload['variants'])) {
                         $productId = $input['id'];
-                        $variantsInput = $this->mapVariantsForBulkUpdate($payload['variants']);
-                        if (!empty($variantsInput)) {
+                        $existingVariants = $this->fetchExistingVariants($productId);
+
+                        // Map id theo SKU nếu thiếu admin_graphql_api_id trong payload
+                        $payload['variants'] = $this->injectVariantIdsFromSku($payload['variants'], $existingVariants);
+
+                        $updateInput = $this->mapVariantsForBulkUpdate($payload['variants']);
+                        if (!empty($updateInput)) {
                             $bulkResp = $this->requestQuery(
                                 $this->graphQLQueryHelper->getProductVariantsBulkUpdateMutation(),
                                 [
                                     'productId' => $productId,
-                                    'variants' => $variantsInput,
+                                    'variants' => $updateInput,
                                 ]
                             );
                             $bulkErrors = $bulkResp['data']['productVariantsBulkUpdate']['userErrors'] ?? [];
@@ -119,6 +146,42 @@ class ShopifyWebhookConsumer implements ConsumerInterface
                                 $this->logger->warning('VariantsBulkUpdate userErrors', ['errors' => $bulkErrors]);
                                 $this->createEventTriggeredFile('PRODUCTS_UPDATE_VARIANTS_errors', json_encode($bulkErrors));
                             }
+                        }
+
+                        // Tạo mới variants còn thiếu (theo SKU)
+                        $newVariants = $this->filterNewVariants($payload['variants'], $existingVariants);
+                        $createInput = $this->mapVariantsForBulkCreate($newVariants);
+                        if (!empty($createInput)) {
+                            $bulkResp = $this->requestQuery(
+                                $this->graphQLQueryHelper->getProductVariantsBulkCreateMutation(),
+                                [
+                                    'productId' => $productId,
+                                    'variants' => $createInput,
+                                ]
+                            );
+                            $bulkErrors = $bulkResp['data']['productVariantsBulkCreate']['userErrors'] ?? [];
+                            if (!empty($bulkErrors)) {
+                                $this->logger->warning('VariantsBulkCreate userErrors (update)', ['errors' => $bulkErrors]);
+                                $this->createEventTriggeredFile('PRODUCTS_UPDATE_VARIANTS_CREATE_errors', json_encode($bulkErrors));
+                            }
+                        }
+                    }
+
+                    // Dedup media và chỉ tạo media mới trong update
+                    $existingMediaUrls = $this->fetchExistingMediaPreviewUrls($input['id']);
+                    $mediaInputUpdate = $this->mapMediaCreateInput($payload, $existingMediaUrls);
+                    if (!empty($mediaInputUpdate)) {
+                        $mediaResp = $this->requestQuery(
+                            $this->graphQLQueryHelper->getProductCreateMediaMutation(),
+                            [
+                                'productId' => $input['id'],
+                                'media' => $mediaInputUpdate,
+                            ]
+                        );
+                        $mediaErrors = $mediaResp['data']['productCreateMedia']['mediaUserErrors'] ?? [];
+                        if (!empty($mediaErrors)) {
+                            $this->logger->warning('ProductCreateMedia userErrors (update)', ['errors' => $mediaErrors]);
+                            $this->createEventTriggeredFile('PRODUCTS_UPDATE_MEDIA_errors', json_encode($mediaErrors));
                         }
                     }
                     break;
@@ -234,7 +297,6 @@ class ShopifyWebhookConsumer implements ConsumerInterface
                 $node['weight'] = (float) $v['weight'];
                 if (isset($v['weight_unit'])) { $node['weightUnit'] = (string) strtoupper($v['weight_unit']); }
             }
-            // selectedOptions từ REST: option1/option2/option3
             $selectedOptions = [];
             for ($i = 1; $i <= 3; $i++) {
                 $optKey = 'option'.$i;
@@ -261,12 +323,8 @@ class ShopifyWebhookConsumer implements ConsumerInterface
         $result = [];
         foreach ($variants as $v) {
             $node = [];
-            // Yêu cầu có id GraphQL của variant để update; nếu REST gửi admin_graphql_api_id cho variant, dùng nó
             if (!empty($v['admin_graphql_api_id'])) {
                 $node['id'] = $v['admin_graphql_api_id'];
-            } elseif (!empty($v['id'])) {
-                // Nếu chỉ có id số (REST), KHÔNG đủ để gọi GraphQL update — bỏ qua để tránh lỗi
-                continue;
             } else {
                 continue;
             }
@@ -284,6 +342,80 @@ class ShopifyWebhookConsumer implements ConsumerInterface
             $result[] = $node;
         }
         return $result;
+    }
+
+    private function fetchExistingVariants(string $productId): array
+    {
+        $resp = $this->requestQuery($this->graphQLQueryHelper->getProductVariantsForDedupQuery(), ['productId' => $productId]);
+        $nodes = $resp['data']['product']['variants']['nodes'] ?? [];
+        $bySku = [];
+        foreach ($nodes as $node) {
+            $sku = $node['sku'] ?? null;
+            if ($sku) {
+                $bySku[$sku] = $node;
+            }
+        }
+        return $bySku;
+    }
+
+    private function injectVariantIdsFromSku(array $variants, array $existingBySku): array
+    {
+        foreach ($variants as &$v) {
+            if (empty($v['admin_graphql_api_id']) && !empty($v['sku'])) {
+                $sku = (string) $v['sku'];
+                if (!empty($existingBySku[$sku]['id'])) {
+                    $v['admin_graphql_api_id'] = $existingBySku[$sku]['id'];
+                }
+            }
+        }
+        unset($v);
+        return $variants;
+    }
+
+    private function filterNewVariants(array $variants, array $existingBySku): array
+    {
+        $result = [];
+        foreach ($variants as $v) {
+            $sku = $v['sku'] ?? null;
+            if ($sku && isset($existingBySku[$sku])) {
+                continue;
+            }
+            $result[] = $v;
+        }
+        return $result;
+    }
+
+    private function fetchExistingMediaPreviewUrls(string $productId): array
+    {
+        $resp = $this->requestQuery($this->graphQLQueryHelper->getProductMediaForDedupQuery(), ['productId' => $productId]);
+        $nodes = $resp['data']['product']['media']['nodes'] ?? [];
+        $urls = [];
+        foreach ($nodes as $node) {
+            $url = $node['previewImage']['url'] ?? null;
+            if ($url) {
+                $urls[$url] = true;
+            }
+        }
+        return $urls;
+    }
+
+    private function mapMediaCreateInput(array $payload, array $existingUrls = []): array
+    {
+        $newMedia = [];
+        if (array_key_exists('media', $payload) && is_array($payload['media']) && count($payload['media']) > 0) {
+            foreach ($payload['media'] as $media) {
+                $src = $media['preview_image']['src'] ?? null;
+                if ($src && isset($existingUrls[$src])) {
+                    continue; // skip duplicate
+                }
+                $newMedia[] = [
+                    'alt' => $media['alt'] ?? null,
+                    'mediaContentType' => $media['media_content_type'] ?? null,
+                    'originalSource' => $src,
+                ];
+            }
+        }
+        return $newMedia;
     }
 
     private function normalizeTags($tags): array
@@ -330,6 +462,6 @@ class ShopifyWebhookConsumer implements ConsumerInterface
     private function getEventTriggeredFileName($name = null)
     {
         $name = preg_replace('`[^a-zA-Z0-9_-]+`', '_', ''.$name);
-        return 'webhook_shopify_'.$name+'_event_triggered.txt';
+        return 'webhook_shopify_'.$name.'_event_triggered.txt';
     }
 }

@@ -1399,4 +1399,38 @@ class GraphQLQueryHelper
         }
         ';
     }
+
+    public function getProductVariantsForDedupQuery(): string {
+        return '
+        query ProductVariantsForDedup($productId: ID!) {
+          product(id: $productId) {
+            id
+            variants(first: 250) {
+              nodes {
+                id
+                sku
+                selectedOptions { name value }
+              }
+            }
+          }
+        }
+        ';
+    }
+
+    public function getProductMediaForDedupQuery(): string {
+        return '
+        query ProductMediaForDedup($productId: ID!) {
+          product(id: $productId) {
+            id
+            media(first: 100) {
+              nodes {
+                mediaContentType
+                previewImage { url }
+                alt
+              }
+            }
+          }
+        }
+        ';
+    }
 }
