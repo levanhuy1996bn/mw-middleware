@@ -1384,4 +1384,19 @@ class GraphQLQueryHelper
         }
         ';
     }
+
+    public function getProductCreateMediaMutation(): string {
+        return '
+        mutation ProductCreateMedia($productId: ID!, $media: [CreateMediaInput!]!) {
+            productCreateMedia(productId: $productId, media: $media) {
+                media {
+                    alt
+                    mediaContentType
+                    status
+                }
+                mediaUserErrors { field message }
+            }
+        }
+        ';
+    }
 }
