@@ -18,8 +18,7 @@ class ShopifyWebhookConsumer implements ConsumerInterface
     private LoggerInterface $logger;
     private Filesystem $filesystem;
 
-    #[\Symfony\Contracts\Service\Attribute\Required]
-    public function setShopifySDK(GraphQLQueryHelper $graphQLQueryHelper, ShopifySDK $shopifySDK, LoggerInterface $logger, Filesystem $filesystem)
+    public function __construct(GraphQLQueryHelper $graphQLQueryHelper, ShopifySDK $shopifySDK, LoggerInterface $logger, Filesystem $filesystem)
     {
         $this->shopifySDK = $shopifySDK;
         $this->graphQLQueryHelper = $graphQLQueryHelper;
@@ -30,7 +29,7 @@ class ShopifyWebhookConsumer implements ConsumerInterface
     public function consume(RemoteEvent $event): void
     {
         $payload = $event->getPayload();
-        $eventId = (string) $event->getId(); // format: <topic>.<domain>.<webhook-id>
+        $eventId = $event->getId();
         $eventName = $event->getName();
 
         $topic = $this->extractTopicFromEventId($eventId);
@@ -434,7 +433,7 @@ class ShopifyWebhookConsumer implements ConsumerInterface
     {
         $url = $this->shopifySDK->GraphQL()->generateUrl();
         if (is_string($url)) {
-            $url = str_replace('/2022-04/', '/2022-07/', $url);
+            $url = str_replace('/2022-04/', '/2022-10/', $url);
         }
 
         return $this->shopifySDK->GraphQL()->post($query, $url, false, $variables);
