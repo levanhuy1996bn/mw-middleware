@@ -241,13 +241,7 @@ class ShopifyWebhookConsumer implements ConsumerInterface
             if (array_key_exists('taxable', $v)) { $node['taxable'] = (bool) $v['taxable']; }
             if (array_key_exists('requires_shipping', $v)) { $node['requiresShipping'] = (bool) $v['requires_shipping']; }
             if (isset($v['tax_code'])) { $node['taxCode'] = (string) $v['tax_code']; }
-            // Prefer normalized options if present
-            if (!empty($v['__normalized_options']) && is_array($v['__normalized_options'])) { $node['options'] = array_values($v['__normalized_options']); }
-            else {
-                $options = [];
-                for ($i = 1; $i <= 3; $i++) { $optKey = 'option'.$i; if (array_key_exists($optKey, $v) && $v[$optKey] !== null && $v[$optKey] !== '') { $options[] = (string) $v[$optKey]; } }
-                if (!empty($options)) { $node['options'] = $options; }
-            }
+            // Removed unsupported 'options' field from ProductVariantsBulkInput
             if (!empty($node)) { $result[] = $node; }
         }
         return $result;
