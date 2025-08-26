@@ -95,44 +95,7 @@ class ShopifyWebhookConsumer implements ConsumerInterface
                     }
                 }
 
-                // Variants flow
-                if (!empty($payload['variants']) && is_array($payload['variants']) && $productId) {
-                    if ($isUpdate) {
-                        $existingVariants = $this->fetchExistingVariants($productId);
-                        $payload['variants'] = $this->injectVariantIdsFromSku($payload['variants'], $existingVariants);
-                        $updateInput = $this->mapVariantsForBulkUpdate($payload['variants']);
-                        if (!empty($updateInput)) {
-                            $bulkResp = $this->requestQuery($this->graphQLQueryHelper->getProductVariantsBulkUpdateMutation(), [ 'productId' => $productId, 'variants' => $updateInput ]);
-                            $bulkErrors = $bulkResp['data']['productVariantsBulkUpdate']['userErrors'] ?? [];
-                            if (!empty($bulkErrors)) { $this->logger->warning('VariantsBulkUpdate userErrors', ['errors' => $bulkErrors]); $this->createEventTriggeredFile('PRODUCTS_UPDATE_VARIANTS_errors', json_encode($bulkErrors)); }
-                        }
-                        $newVariants = $this->filterNewVariants($payload['variants'], $existingVariants);
-                        if (!empty($newVariants)) {
-                            $this->ensureProductOptions($productId, $payload);
-                            $numOptions = $this->fetchNumProductOptions($productId);
-                            $normalized = $this->normalizeVariantsOptionsCount($newVariants, $numOptions);
-                            $createInput = $this->mapVariantsForBulkCreate($normalized);
-                            if (!empty($createInput)) {
-                                $bulkResp = $this->requestQuery($this->graphQLQueryHelper->getProductVariantsBulkCreateMutation(), [ 'productId' => $productId, 'variants' => $createInput ]);
-                                $bulkErrors = $bulkResp['data']['productVariantsBulkCreate']['userErrors'] ?? [];
-                                if (!empty($bulkErrors)) { $this->logger->warning('VariantsBulkCreate userErrors (update)', ['errors' => $bulkErrors]); $this->createEventTriggeredFile('PRODUCTS_UPDATE_VARIANTS_CREATE_errors', json_encode($bulkErrors)); }
-                            }
-                        }
-                    } else { // create topic
-                        $calledOptionsCreate = $this->ensureProductOptions($productId, $payload);
-                        if (!$calledOptionsCreate) {
-                            $existingVariants = $this->fetchExistingVariants($productId);
-                            $numOptions = $this->fetchNumProductOptions($productId);
-                            $normalized = $this->normalizeVariantsOptionsCount($payload['variants'], $numOptions);
-                            $variantsInput = $this->mapVariantsForBulkCreate($this->filterNewVariants($normalized, $existingVariants));
-                            if (!empty($variantsInput)) {
-                                $bulkResp = $this->requestQuery($this->graphQLQueryHelper->getProductVariantsBulkCreateMutation(), [ 'productId' => $productId, 'variants' => $variantsInput ]);
-                                $bulkErrors = $bulkResp['data']['productVariantsBulkCreate']['userErrors'] ?? [];
-                                if (!empty($bulkErrors)) { $this->logger->warning('VariantsBulkCreate userErrors', ['errors' => $bulkErrors]); $this->createEventTriggeredFile('PRODUCTS_CREATE_VARIANTS_errors', json_encode($bulkErrors)); }
-                            }
-                        }
-                    }
-                }
+                // Variants handling removed per requirements
 
 
             } else {
@@ -147,31 +110,10 @@ class ShopifyWebhookConsumer implements ConsumerInterface
     }
 
     private function fetchNumProductOptions(string $productId): int
-    {
-        try {
-            $resp = $this->requestQuery($this->graphQLQueryHelper->getProductOptionsQuery(), ['productId' => $productId]);
-            $names = $resp['data']['product']['options'] ?? [];
-            return is_array($names) ? count($names) : 0;
-        } catch (\Throwable $e) { return 0; }
-    }
+    { return 0; }
 
     private function normalizeVariantsOptionsCount(array $variants, int $numOptions): array
-    {
-        if ($numOptions <= 0) { return []; }
-        $result = [];
-        foreach ($variants as $v) {
-            $opts = [];
-            for ($i = 1; $i <= $numOptions; $i++) {
-                $val = $v['option'.$i] ?? null;
-                if ($val === null || $val === '') { $opts = []; break; }
-                $opts[] = (string) $val;
-            }
-            if (empty($opts)) { continue; }
-            $v['__normalized_options'] = $opts;
-            $result[] = $v;
-        }
-        return $result;
-    }
+    { return []; }
 
     private function extractTopicFromEventId(string $eventId): ?string
     { $firstDot = strpos($eventId, '.'); if ($firstDot === false) { return null; } return substr($eventId, 0, $firstDot); }
@@ -282,39 +224,13 @@ class ShopifyWebhookConsumer implements ConsumerInterface
     }
 
     private function fetchExistingVariants(string $productId): array
-    {
-        $resp = $this->requestQuery($this->graphQLQueryHelper->getProductVariantsForQuery(), ['productId' => $productId]);
-        $nodes = $resp['data']['product']['variants']['nodes'] ?? [];
-        $bySku = [];
-        foreach ($nodes as $node) {
-            $sku = $node['sku'] ?? null;
-            if ($sku) { $bySku[$sku] = $node; }
-        }
-        return $bySku;
-    }
+    { return []; }
 
     private function injectVariantIdsFromSku(array $variants, array $existingBySku): array
-    {
-        foreach ($variants as &$v) {
-            if (empty($v['admin_graphql_api_id']) && !empty($v['sku'])) {
-                $sku = (string) $v['sku'];
-                if (!empty($existingBySku[$sku]['id'])) { $v['admin_graphql_api_id'] = $existingBySku[$sku]['id']; }
-            }
-        }
-        unset($v);
-        return $variants;
-    }
+    { return $variants; }
 
     private function filterNewVariants(array $variants, array $existingBySku): array
-    {
-        $result = [];
-        foreach ($variants as $v) {
-            $sku = $v['sku'] ?? null;
-            if ($sku && isset($existingBySku[$sku])) { continue; }
-            $result[] = $v;
-        }
-        return $result;
-    }
+    { return $variants; }
 
     private function fetchExistingMediaPreviewUrls(string $productId): array
     { return []; }
