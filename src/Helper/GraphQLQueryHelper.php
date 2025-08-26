@@ -1446,8 +1446,10 @@ class GraphQLQueryHelper
             media(first: 100) {
               nodes {
                 mediaContentType
-                previewImage { url }
                 alt
+                ... on MediaImage {
+                  image { url altText }
+                }
               }
             }
           }

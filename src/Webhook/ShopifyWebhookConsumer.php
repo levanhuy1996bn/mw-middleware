@@ -345,7 +345,8 @@ class ShopifyWebhookConsumer implements ConsumerInterface
         $nodes = $resp['data']['product']['media']['nodes'] ?? [];
         $urls = [];
         foreach ($nodes as $node) {
-            $url = $node['previewImage']['url'] ?? null;
+            $url = null;
+            if (isset($node['image']['url'])) { $url = $node['image']['url']; }
             if ($url) { $urls[$url] = true; }
         }
         return $urls;
