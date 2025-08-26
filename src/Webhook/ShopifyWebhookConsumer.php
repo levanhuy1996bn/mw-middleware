@@ -41,7 +41,7 @@ class ShopifyWebhookConsumer implements ConsumerInterface
             'topic' => $topic,
         ]);
 
-        // Ghi dấu vết theo eventId và theo topic để phục vụ test/quan sát
+        // Trace by eventId and topic for observability/tests
         $this->createEventTriggeredFile($eventId, microtime(true) . ' ||| ' . ($payload['id'] ?? ''));
         if ($topic !== null) {
             $this->createEventTriggeredFile($topic);
@@ -64,7 +64,7 @@ class ShopifyWebhookConsumer implements ConsumerInterface
 
                     $createdProductId = $response['data']['productCreate']['product']['id'] ?? null;
 
-                    // Dedup và tạo variants mới nếu có
+                    // Deduplicate and create new variants if present
                     if ($createdProductId && !empty($payload['variants']) && is_array($payload['variants'])) {
                         $existingVariants = $this->fetchExistingVariants($createdProductId);
                         $variantsInput = $this->mapVariantsForBulkCreate($this->filterNewVariants($payload['variants'], $existingVariants));
@@ -84,7 +84,7 @@ class ShopifyWebhookConsumer implements ConsumerInterface
                         }
                     }
 
-                    // Dedup media và chỉ tạo media mới
+                    // Deduplicate media and only create new ones
                     if ($createdProductId) {
                         $existingMediaUrls = $this->fetchExistingMediaPreviewUrls($createdProductId);
                         $mediaInput = $this->mapMediaCreateInput($payload, $existingMediaUrls);
@@ -124,12 +124,12 @@ class ShopifyWebhookConsumer implements ConsumerInterface
                         $this->createEventTriggeredFile('PRODUCTS_UPDATE_errors', json_encode($errors));
                     }
 
-                    // Cập nhật / tạo mới variants dựa trên dedup
+                    // Update existing variants and create missing ones after dedup
                     if (!empty($payload['variants']) && is_array($payload['variants'])) {
                         $productId = $input['id'];
                         $existingVariants = $this->fetchExistingVariants($productId);
 
-                        // Map id theo SKU nếu thiếu admin_graphql_api_id trong payload
+                        // Map variant ID by SKU if admin_graphql_api_id is missing in the payload
                         $payload['variants'] = $this->injectVariantIdsFromSku($payload['variants'], $existingVariants);
 
                         $updateInput = $this->mapVariantsForBulkUpdate($payload['variants']);
@@ -148,7 +148,7 @@ class ShopifyWebhookConsumer implements ConsumerInterface
                             }
                         }
 
-                        // Tạo mới variants còn thiếu (theo SKU)
+                        // Create missing variants (by SKU)
                         $newVariants = $this->filterNewVariants($payload['variants'], $existingVariants);
                         $createInput = $this->mapVariantsForBulkCreate($newVariants);
                         if (!empty($createInput)) {
@@ -167,7 +167,7 @@ class ShopifyWebhookConsumer implements ConsumerInterface
                         }
                     }
 
-                    // Dedup media và chỉ tạo media mới trong update
+                    // Deduplicate media and only create new ones during update
                     $existingMediaUrls = $this->fetchExistingMediaPreviewUrls($input['id']);
                     $mediaInputUpdate = $this->mapMediaCreateInput($payload, $existingMediaUrls);
                     if (!empty($mediaInputUpdate)) {
