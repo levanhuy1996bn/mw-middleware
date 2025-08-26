@@ -348,6 +348,8 @@ class ShopifyWebhookConsumer implements ConsumerInterface
         $newMedia = [];
         if (array_key_exists('media', $payload) && is_array($payload['media']) && count($payload['media']) > 0) {
             foreach ($payload['media'] as $media) {
+                // Skip media items that already exist in Shopify (have graph/admin id or numeric id)
+                if (!empty($media['admin_graphql_api_id']) || !empty($media['id'])) { continue; }
                 $typeRaw = $media['media_content_type'] ?? $media['media_type'] ?? 'IMAGE';
                 $type = strtoupper((string)$typeRaw);
                 $alt = $media['alt'] ?? null;
