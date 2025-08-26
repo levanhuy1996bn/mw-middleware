@@ -408,8 +408,6 @@ class ShopifyWebhookConsumer implements ConsumerInterface
 
     private function resolveExistingProductId(array $payload): ?string
     {
-        // Prefer admin_graphql_api_id if present
-        if (!empty($payload['admin_graphql_api_id']) && is_string($payload['admin_graphql_api_id'])) { return $payload['admin_graphql_api_id']; }
         // Try lookup by handle
         $handle = $payload['handle'] ?? null;
         if (is_string($handle) && $handle !== '') {
