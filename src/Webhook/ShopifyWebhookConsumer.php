@@ -134,14 +134,14 @@ class ShopifyWebhookConsumer implements ConsumerInterface
                     }
                 }
 
-                // Media
-                if ($productId) {
-                                        $existingMedia = $this->fetchExistingMediaPreviewUrls($productId);
+                // Media: only on update add missing media by URL; skip on create to avoid duplicates (Shopify already created them)
+                if ($productId && $isUpdate) {
+                    $existingMedia = $this->fetchExistingMediaPreviewUrls($productId);
                     $mediaInput = $this->mapMediaCreateInput($payload, $existingMedia);
                     if (!empty($mediaInput)) {
                         $mediaResp = $this->requestQuery($this->graphQLQueryHelper->getProductCreateMediaMutation(), [ 'productId' => $productId, 'media' => $mediaInput ]);
                         $mediaErrors = $mediaResp['data']['productCreateMedia']['mediaUserErrors'] ?? [];
-                        if (!empty($mediaErrors)) { $this->logger->warning('ProductCreateMedia userErrors', ['errors' => $mediaErrors]); $this->createEventTriggeredFile(($isCreate ? 'PRODUCTS_CREATE_MEDIA_errors' : 'PRODUCTS_UPDATE_MEDIA_errors'), json_encode($mediaErrors)); }
+                        if (!empty($mediaErrors)) { $this->logger->warning('ProductCreateMedia userErrors', ['errors' => $mediaErrors]); $this->createEventTriggeredFile('PRODUCTS_UPDATE_MEDIA_errors', json_encode($mediaErrors)); }
                     }
                 }
             } else {
