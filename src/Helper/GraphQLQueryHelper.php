@@ -1332,6 +1332,11 @@ class GraphQLQueryHelper
                     handle
                     vendor
                     productType
+                    media(first: 250) {
+                        nodes {
+                            id
+                        }
+                    }
                     variants(first: 10) {
                         edges {
                             node {
@@ -1438,60 +1443,6 @@ class GraphQLQueryHelper
         query ProductIdByHandle($handle: String!) {
           productByHandle(handle: $handle) {
             id
-          }
-        }
-        ';
-    }
-
-    public function getProductVariantsForQuery(): string {
-        return '
-        query ProductVariants($productId: ID!) {
-          product(id: $productId) {
-            id
-            variants(first: 250) {
-              nodes {
-                id
-                sku
-                selectedOptions { name value }
-              }
-            }
-          }
-        }
-        ';
-    }
-
-    public function getProductMediaForQuery(): string {
-        return '
-        query ProductMedia($productId: ID!) {
-          product(id: $productId) {
-            id
-            media(first: 100) {
-              nodes {
-                id
-                mediaContentType
-                alt
-                ... on MediaImage {
-                  image { url altText }
-                }
-                ... on Video {
-                  sources { url }
-                }
-                ... on ExternalVideo {
-                  embeddedUrl
-                }
-              }
-            }
-          }
-        }
-        ';
-    }
-
-    public function getProductOptionsQuery(): string {
-        return '
-        query ProductOptions($productId: ID!) {
-          product(id: $productId) {
-            id
-            options(first: 3) { name }
           }
         }
         ';

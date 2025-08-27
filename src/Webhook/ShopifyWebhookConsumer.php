@@ -65,64 +65,43 @@ class ShopifyWebhookConsumer implements ConsumerInterface
 
             if ($isCreate || $isUpdate) {
                 // Resolve an existing product by id or handle
-                $resolvedId = $this->resolveExistingProductId($payload);
+                $productId = $this->resolveExistingProductId($payload);
+                $oldMediaIds = [];
 
-                if ($isCreate) {
-                    if ($resolvedId) {
-                        // Exists -> Update
-                        $input       = $this->mapProductUpdateInput($payload);
-                        $input['id'] = $resolvedId;
-                        $response    = $this->requestQuery($this->graphQLQueryHelper->getProductUpdateMutation(),
-                            ['input' => $input]);
-                        $errors      = $response['data']['productUpdate']['userErrors'] ?? [];
-                        if ( ! empty($errors)) {
-                            $this->logger->warning('ProductUpdate userErrors (create routed)', ['errors' => $errors]);
-                            $this->createEventTriggeredFile('PRODUCTS_CREATE_update_errors', json_encode($errors));
-                        }
-                    } else {
-                        // Not exists -> Create
-                        $input    = $this->mapProductCreateInput($payload);
-                        $response = $this->requestQuery($this->graphQLQueryHelper->getProductCreateMutation(),
-                            ['input' => $input]);
-                        $errors   = $response['data']['productCreate']['userErrors'] ?? [];
-                        if ( ! empty($errors)) {
-                            $this->logger->warning('ProductCreate userErrors', ['errors' => $errors]);
-                            $this->createEventTriggeredFile('PRODUCTS_CREATE_errors', json_encode($errors));
-                        }
+                if ($productId) {
+                    // Exists -> Update
+                    [$input, $media] = $this->setProductInput($payload);
+                    $input['id'] = $productId;
+                    $response    = $this->requestQuery($this->graphQLQueryHelper->getProductUpdateMutation(),
+                        ['input' => $input]);
+                    $errors      = $response['data']['productUpdate']['userErrors'] ?? [];
+                    if ( ! empty($errors)) {
+                        $this->logger->warning('ProductUpdate userErrors (create routed)', ['errors' => $errors]);
+                        $this->createEventTriggeredFile('PRODUCTS_CREATE_update_errors', json_encode($errors));
                     }
-                } else { // Update topic
-                    if ($resolvedId) {
-                        // Exists -> Update
-                        $input       = $this->mapProductUpdateInput($payload);
-                        $input['id'] = $resolvedId;
-                        $response    = $this->requestQuery($this->graphQLQueryHelper->getProductUpdateMutation(),
-                            ['input' => $input]);
-                        $errors      = $response['data']['productUpdate']['userErrors'] ?? [];
-                        if ( ! empty($errors)) {
-                            $this->logger->warning('ProductUpdate userErrors', ['errors' => $errors]);
-                            $this->createEventTriggeredFile('PRODUCTS_UPDATE_errors', json_encode($errors));
-                        }
-                    } else {
-                        // Not exists -> Create
-                        $input    = $this->mapProductCreateInput($payload);
-                        $response = $this->requestQuery($this->graphQLQueryHelper->getProductCreateMutation(),
-                            ['input' => $input]);
-                        $errors   = $response['data']['productCreate']['userErrors'] ?? [];
-                        if ( ! empty($errors)) {
-                            $this->logger->warning('ProductCreate userErrors (update routed)', ['errors' => $errors]);
-                            $this->createEventTriggeredFile('PRODUCTS_UPDATE_create_errors', json_encode($errors));
+                } else {
+                    // Not exists -> Create
+                    [$input, $media] = $this->setProductInput($payload);
+                    $response = $this->requestQuery($this->graphQLQueryHelper->getProductCreateMutation(),
+                        ['input' => $input]);
+                    $errors   = $response['data']['productCreate']['userErrors'] ?? [];
+                    if ( ! empty($errors)) {
+                        $this->logger->warning('ProductCreate userErrors', ['errors' => $errors]);
+                        $this->createEventTriggeredFile('PRODUCTS_CREATE_errors', json_encode($errors));
+                    }
+
+                    $productMedia = $response['data']['productCreate']['product']['media']['nodes'] ?? [];
+                    foreach ($productMedia as $mediaItem) {
+                        if (isset($mediaItem['id'])) {
+                            $oldMediaIds[] = $mediaItem['id'];
                         }
                     }
                 }
-
-                // Variants handling removed per requirements
-
-
             } else {
                 $this->logger->info('Shopify webhook topic ignored', ['topic' => $topic]);
             }
 
-            // Mark event processed successfully
+//             Mark event processed successfully
             $this->createEventTriggeredFile($eventId . '_done');
         } catch (\Throwable $e) {
             $this->logger->error('Error processing Shopify webhook' . $e->getMessage(),
@@ -140,77 +119,46 @@ class ShopifyWebhookConsumer implements ConsumerInterface
         return substr($eventId, 0, $firstDot);
     }
 
-    private function mapProductCreateInput(array $payload): array
+    private function setProductInput(array $payload): array
     {
-        $input = [];
+        $input    = [];
+        $newMedia = [];
         if (isset($payload['title'])) {
             $input['title'] = (string)$payload['title'];
         }
         if (array_key_exists('body_html', $payload)) {
             $input['descriptionHtml'] = $payload['body_html'] ?? null;
         }
-        if (array_key_exists('vendor', $payload)) {
-            $input['vendor'] = $payload['vendor'];
+        if (array_key_exists('status', $payload) && is_string($payload['status'])) {
+            $input['status'] = strtoupper($payload['status']);
         }
         if (array_key_exists('product_type', $payload)) {
             $input['productType'] = $payload['product_type'];
         }
-        if (array_key_exists('status', $payload) && is_string($payload['status'])) {
-            $input['status'] = strtoupper($payload['status']);
-        }
-        if (array_key_exists('tags', $payload)) {
-            $input['tags'] = $this->normalizeTags($payload['tags']);
-        }
-        if (array_key_exists('template_suffix', $payload)) {
-            $input['templateSuffix'] = $payload['template_suffix'];
-        }
-
-        return $input;
-    }
-
-    private function mapProductUpdateInput(array $payload): array
-    {
-        $input = [];
-        if ( ! empty($payload['admin_graphql_api_id'])) {
-            $input['id'] = $payload['admin_graphql_api_id'];
-        }
-        if (isset($payload['title'])) {
-            $input['title'] = (string)$payload['title'];
-        }
-        if (array_key_exists('body_html', $payload)) {
-            $input['descriptionHtml'] = $payload['body_html'] ?? null;
-        }
         if (array_key_exists('vendor', $payload)) {
             $input['vendor'] = $payload['vendor'];
         }
-        if (array_key_exists('product_type', $payload)) {
-            $input['productType'] = $payload['product_type'];
-        }
-        if (array_key_exists('status', $payload) && is_string($payload['status'])) {
-            $input['status'] = strtoupper($payload['status']);
-        }
-        if (array_key_exists('tags', $payload)) {
-            $input['tags'] = $this->normalizeTags($payload['tags']);
-        }
-        if (array_key_exists('template_suffix', $payload)) {
-            $input['templateSuffix'] = $payload['template_suffix'];
+        if (array_key_exists('category', $payload)) {
+            $input['category'] = $payload['category']['id'] ?? null;
         }
 
-        return $input;
-    }
-
-    private function normalizeTags($tags): array
-    {
-        if (is_array($tags)) {
-            return array_values(array_filter(array_map('strval', $tags), static fn($t) => $t !== ''));
-        }
-        if (is_string($tags)) {
-            $parts = array_map('trim', explode(',', $tags));
-
-            return array_values(array_filter($parts, static fn($t) => $t !== ''));
+        if(array_key_exists('media', $payload) && count($payload['media']) > 0) {
+            foreach ($payload['media'] as $media) {
+                $newMedia[] = [
+                    'alt' => $media['alt'] ?? null,
+                    'mediaContentType' => $media['media_content_type'] ?? null,
+                    'originalSource' => $media['preview_image']['src'] ?? null,
+                ];
+            }
         }
 
-        return [];
+
+        //category, media
+        // variants
+        // metafields: brandCollection, shippingClass, eligibleForDiscount
+        //metafields: pillowType, foundationType, mattressType, sleepPosition, comfortLevel, benefits
+
+        return [$input, $newMedia];
     }
 
     private function requestQuery($query, $variables)
