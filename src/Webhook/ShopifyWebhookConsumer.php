@@ -66,15 +66,15 @@ class ShopifyWebhookConsumer implements ConsumerInterface
             if ($isCreate || $isUpdate) {
                 // Resolve an existing product by id or handle
                 $resolvedProductId = $this->resolveExistingProductId($payload);
-                $oldMediaIds = [];
-                $newMediaInputs = [];
-                $targetProductId = null;
+                $oldMediaIds       = [];
+                $targetProductId   = $resolvedProductId;
 
+                [$input, $newMediaInputs] = $this->setProductInput($payload);
                 if ($resolvedProductId) {
                     // Exists -> Update
-                    [$input, $newMediaInputs] = $this->setProductInput($payload);
                     $input['id'] = $resolvedProductId;
-                    $response    = $this->requestQuery($this->graphQLQueryHelper->getProductUpdateMutation(), ['input' => $input]);
+                    $response    = $this->requestQuery($this->graphQLQueryHelper->getProductUpdateMutation(),
+                        ['input' => $input]);
                     $errors      = $response['data']['productUpdate']['userErrors'] ?? [];
                     if ( ! empty($errors)) {
                         $this->logger->warning('ProductUpdate userErrors (create routed)', ['errors' => $errors]);
@@ -88,11 +88,10 @@ class ShopifyWebhookConsumer implements ConsumerInterface
                             $oldMediaIds[] = $mediaItem['id'];
                         }
                     }
-                    $targetProductId = $resolvedProductId;
                 } else {
                     // Not exists -> Create
-                    [$input, $newMediaInputs] = $this->setProductInput($payload);
-                    $response = $this->requestQuery($this->graphQLQueryHelper->getProductCreateMutation(), ['input' => $input]);
+                    $response = $this->requestQuery($this->graphQLQueryHelper->getProductCreateMutation(),
+                        ['input' => $input]);
                     $errors   = $response['data']['productCreate']['userErrors'] ?? [];
                     if ( ! empty($errors)) {
                         $this->logger->warning('ProductCreate userErrors', ['errors' => $errors]);
@@ -111,27 +110,29 @@ class ShopifyWebhookConsumer implements ConsumerInterface
                 }
 
                 // Remove old media via mutation before creating new media
-                if (!empty($oldMediaIds)) {
+                if (count($oldMediaIds) > 0 && $targetProductId) {
                     try {
-                        $deleteResp = $this->requestQuery($this->graphQLQueryHelper->getProductDeleteMediaMutation(), ['mediaIds' => $oldMediaIds]);
-                        $deleteErrors = $deleteResp['data']['mediaDelete']['userErrors'] ?? [];
-                        if (!empty($deleteErrors)) {
-                            $this->logger->warning('MediaDelete userErrors', ['errors' => $deleteErrors]);
+                        $deleteResp   = $this->requestQuery($this->graphQLQueryHelper->getProductDeleteMediaMutation(),
+                            ['mediaIds' => $oldMediaIds, 'productId' => $targetProductId]);
+                        $deleteErrors = $deleteResp['data']['productDeleteMedia']['userErrors'] ?? [];
+                        if ( ! empty($deleteErrors)) {
+                            $this->logger->warning('productDeleteMedia userErrors', ['errors' => $deleteErrors]);
                         }
                     } catch (\Throwable $e) {
-                        $this->logger->error('Exception during mediaDelete: ' . $e->getMessage());
+                        $this->logger->error('Exception during productDeleteMedia: ' . $e->getMessage());
                     }
                 }
 
                 // Create new media if provided
-                if (!empty($newMediaInputs) && $targetProductId) {
+                if (count($newMediaInputs) > 0 && $targetProductId) {
                     try {
-                        $createResp = $this->requestQuery($this->graphQLQueryHelper->getProductCreateMediaMutation(), [
-                            'productId' => $targetProductId,
-                            'media' => $newMediaInputs,
-                        ]);
+                        $createResp   = $this->requestQuery($this->graphQLQueryHelper->getProductCreateMediaMutation(),
+                            [
+                                'productId' => $targetProductId,
+                                'media'     => $newMediaInputs,
+                            ]);
                         $createErrors = $createResp['data']['productCreateMedia']['mediaUserErrors'] ?? [];
-                        if (!empty($createErrors)) {
+                        if ( ! empty($createErrors)) {
                             $this->logger->warning('ProductCreateMedia mediaUserErrors', ['errors' => $createErrors]);
                         }
                     } catch (\Throwable $e) {
@@ -183,12 +184,12 @@ class ShopifyWebhookConsumer implements ConsumerInterface
             $input['category'] = $payload['category']['id'] ?? null;
         }
 
-        if(array_key_exists('media', $payload) && count($payload['media']) > 0) {
+        if (array_key_exists('media', $payload) && count($payload['media']) > 0) {
             foreach ($payload['media'] as $media) {
                 $newMedia[] = [
-                    'alt' => $media['alt'] ?? null,
+                    'alt'              => $media['alt'] ?? null,
                     'mediaContentType' => $media['media_content_type'] ?? null,
-                    'originalSource' => $media['preview_image']['src'] ?? null,
+                    'originalSource'   => $media['preview_image']['src'] ?? null,
                 ];
             }
         }
