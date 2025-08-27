@@ -193,9 +193,6 @@ class ShopifyWebhookConsumer implements ConsumerInterface
                 ];
             }
         }
-
-
-        //category, media
         // variants
         // metafields: brandCollection, shippingClass, eligibleForDiscount
         //metafields: pillowType, foundationType, mattressType, sleepPosition, comfortLevel, benefits
