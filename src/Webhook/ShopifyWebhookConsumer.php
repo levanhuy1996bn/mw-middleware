@@ -189,7 +189,7 @@ class ShopifyWebhookConsumer implements ConsumerInterface
                         'newMediaInputsCount' => count($newMediaInputs),
                     ]);
                     try {
-                        $createResp   = $this->requestQuery($this->graphQLQueryHelper->getProductCreateMediaMutation(),
+                        $createResp = $this->requestQuery($this->graphQLQueryHelper->getProductCreateMediaMutation(),
                             [
                                 'productId' => $targetProductId,
                                 'media'     => $newMediaInputs,
@@ -230,8 +230,8 @@ class ShopifyWebhookConsumer implements ConsumerInterface
                 $this->logger->info('Shopify webhook topic ignored', ['topic' => $topic, 'eventId' => $eventId]);
             }
 
-            // Mark event processed successfully
-            $this->logger->info('Shopify webhook processed successfully', ['eventId' => $eventId, 'topic' => $topic]);
+            // Mark event processing completed
+            $this->logger->info('Shopify webhook processing completed', ['eventId' => $eventId, 'topic' => $topic]);
         } catch (\Throwable $e) {
             $this->logger->error('Error processing Shopify webhook: ' . $e->getMessage(),
                 ['eventId' => $eventId, 'topic' => $topic, 'exception' => $e, 'payload' => $payload]);
