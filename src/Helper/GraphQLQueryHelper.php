@@ -1067,6 +1067,109 @@ class GraphQLQueryHelper
         }');
     }
 
+    public function getProductCreateMutation(): string {
+        return sprintf('
+        mutation ProductCreate($input: ProductInput!) {
+            productCreate(input: $input) {
+                product {
+                    id
+                    title
+                    handle
+                    vendor
+                    productType
+                    variants(first: 10) {
+                        edges {
+                            node {
+                                id
+                                title
+                                sku
+                                price
+                            }
+                        }
+                    }
+                }
+                userErrors {
+                    field
+                    message
+                }
+            }
+        }
+    ');
+    }
+
+    public function getProductUpdateMutation(): string {
+        return sprintf('
+        mutation ProductUpdate($input: ProductInput!) {
+            productUpdate(input: $input) {
+                product {
+                    id
+                    title
+                    handle
+                    vendor
+                    productType
+                    media(first: 250) {
+                        nodes {
+                            id
+                        }
+                    }
+                    variants(first: 10) {
+                        edges {
+                            node {
+                                id
+                                title
+                                sku
+                                price
+                            }
+                        }
+                    }
+                }
+                userErrors {
+                    field
+                    message
+                }
+            }
+        }
+    ');
+    }
+
+    public function getProductCreateMediaMutation(): string {
+        return '
+        mutation ProductCreateMedia($productId: ID!, $media: [CreateMediaInput!]!) {
+            productCreateMedia(productId: $productId, media: $media) {
+                media {
+                    alt
+                    mediaContentType
+                    status
+                }
+                mediaUserErrors { field message }
+            }
+        }
+        ';
+    }
+
+    public function getProductDeleteMediaMutation(): string {
+        return '
+        mutation productDeleteMedia($mediaIds: [ID!]!, $productId: ID!) {
+            productDeleteMedia(mediaIds: $mediaIds, productId: $productId) {
+                userErrors {
+                    field
+                    message
+                }
+            }
+        }
+        ';
+    }
+
+    public function getProductIdByHandleQuery(): string {
+        return '
+        query ProductIdByHandle($handle: String!) {
+          productByHandle(handle: $handle) {
+            id
+          }
+        }
+        ';
+    }
+
     private function mattressProductVariantFields($afterCursor): string
     {
         return sprintf('
@@ -1290,108 +1393,5 @@ class GraphQLQueryHelper
                   }
                }
         ', $afterCursor);
-    }
-
-    public function getProductCreateMutation(): string {
-        return sprintf('
-        mutation ProductCreate($input: ProductInput!) {
-            productCreate(input: $input) {
-                product {
-                    id
-                    title
-                    handle
-                    vendor
-                    productType
-                    variants(first: 10) {
-                        edges {
-                            node {
-                                id
-                                title
-                                sku
-                                price
-                            }
-                        }
-                    }
-                }
-                userErrors {
-                    field
-                    message
-                }
-            }
-        }
-    ');
-    }
-
-    public function getProductUpdateMutation(): string {
-        return sprintf('
-        mutation ProductUpdate($input: ProductInput!) {
-            productUpdate(input: $input) {
-                product {
-                    id
-                    title
-                    handle
-                    vendor
-                    productType
-                    media(first: 250) {
-                        nodes {
-                            id
-                        }
-                    }
-                    variants(first: 10) {
-                        edges {
-                            node {
-                                id
-                                title
-                                sku
-                                price
-                            }
-                        }
-                    }
-                }
-                userErrors {
-                    field
-                    message
-                }
-            }
-        }
-    ');
-    }
-
-    public function getProductCreateMediaMutation(): string {
-        return '
-        mutation ProductCreateMedia($productId: ID!, $media: [CreateMediaInput!]!) {
-            productCreateMedia(productId: $productId, media: $media) {
-                media {
-                    alt
-                    mediaContentType
-                    status
-                }
-                mediaUserErrors { field message }
-            }
-        }
-        ';
-    }
-
-    public function getProductDeleteMediaMutation(): string {
-        return '
-        mutation productDeleteMedia($mediaIds: [ID!]!, $productId: ID!) {
-            productDeleteMedia(mediaIds: $mediaIds, productId: $productId) {
-                userErrors {
-                    field
-                    message
-                }
-            }
-        }
-        ';
-    }
-
-    public function getProductIdByHandleQuery(): string {
-        return '
-        query ProductIdByHandle($handle: String!) {
-          productByHandle(handle: $handle) {
-            id
-          }
-        }
-        ';
     }
 }

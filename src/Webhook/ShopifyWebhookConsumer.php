@@ -45,65 +45,149 @@ class ShopifyWebhookConsumer implements ConsumerInterface
             $isUpdate = ($topic === ShopifyWebhookParser::EVENT_TOPICS['PRODUCTS_UPDATE']);
 
             if ($isCreate || $isUpdate) {
+                $this->logger->info(sprintf('Processing Shopify product webhook: %s', $topic), [
+                    'event_id' => $eventId,
+                    'topic' => $topic,
+                ]);
+
                 // Resolve an existing product by id or handle
                 $resolvedProductId = $this->resolveExistingProductId($payload);
                 $oldMediaIds       = [];
                 $targetProductId   = $resolvedProductId;
 
                 [$input, $newMediaInputs] = $this->setProductInput($payload);
+
+                $this->logger->debug('Product input prepared for mutation', [
+                    'eventId' => $eventId,
+                    'topic' => $topic,
+                    'input' => $input,
+                    'newMediaInputsCount' => count($newMediaInputs),
+                ]);
                 if ($resolvedProductId) {
                     // Exists -> Update
                     $input['id'] = $resolvedProductId;
+                    $this->logger->info('Existing product resolved for update.', [
+                        'eventId' => $eventId,
+                        'topic' => $topic,
+                        'resolvedProductId' => $resolvedProductId,
+                        'productHandle' => $payload['handle'],
+                    ]);
                     $response    = $this->requestQuery($this->graphQLQueryHelper->getProductUpdateMutation(),
                         ['input' => $input]);
+                    $this->logger->info('Shopify productUpdate mutation response received.', [
+                        'event_id' => $eventId,
+                        'topic' => $topic,
+                        'response' => $response ?? [],
+                    ]);
                     $errors      = $response['data']['productUpdate']['userErrors'] ?? [];
                     if ( ! empty($errors)) {
-                        $this->logger->warning('ProductUpdate userErrors (create routed)', ['errors' => $errors]);
+                        $this->logger->warning('ProductUpdate userErrors', [
+                            'eventId' => $eventId,
+                            'topic' => $topic,
+                            'errors' => $errors,
+                            'productId' => $resolvedProductId,
+                        ]);
                     }
 
                     // Collect existing media ids from update response
                     $productMedia = $response['data']['productUpdate']['product']['media']['nodes'] ?? [];
-                    foreach ($productMedia as $mediaItem) {
-                        if (isset($mediaItem['id'])) {
-                            $oldMediaIds[] = $mediaItem['id'];
+                    if (!empty($productMedia)) {
+                        $this->logger->debug('Collected existing media for update', [
+                            'eventId' => $eventId,
+                            'topic' => $topic,
+                            'mediaCount' => count($productMedia),
+                        ]);
+
+                        foreach ($productMedia as $mediaItem) {
+                            if (isset($mediaItem['id'])) {
+                                $oldMediaIds[] = $mediaItem['id'];
+                            }
                         }
                     }
                 } else {
                     // Not exists -> Create
+                    $this->logger->info('No existing product found, proceeding with product creation.', [
+                        'eventId' => $eventId,
+                        'topic' => $topic,
+                        'productHandle' => $payload['handle'],
+                    ]);
                     $response = $this->requestQuery($this->graphQLQueryHelper->getProductCreateMutation(),
                         ['input' => $input]);
+                    $this->logger->info('Shopify productCreate mutation response received.', [
+                        'eventId' => $eventId,
+                        'topic' => $topic,
+                        'response' => $response ?? [],
+                    ]);
                     $errors   = $response['data']['productCreate']['userErrors'] ?? [];
                     if ( ! empty($errors)) {
-                        $this->logger->warning('ProductCreate userErrors', ['errors' => $errors]);
-                    }
-
-                    // Collect media from created product (if any default media exists)
-                    $productMedia = $response['data']['productCreate']['product']['media']['nodes'] ?? [];
-                    foreach ($productMedia as $mediaItem) {
-                        if (isset($mediaItem['id'])) {
-                            $oldMediaIds[] = $mediaItem['id'];
-                        }
+                        $this->logger->warning('ProductCreate userErrors', [
+                            'eventId' => $eventId,
+                            'topic' => $topic,
+                            'errors' => $errors,
+                        ]);
                     }
                     // Use created product id as target for media creation
                     $targetProductId = $response['data']['productCreate']['product']['id'] ?? null;
+                    if (!$targetProductId) {
+                        $this->logger->error('Failed to retrieve target product ID after creation.', [
+                            'eventId' => $eventId,
+                            'topic' => $topic,
+                            'response' => $response,
+                        ]);
+                    }
                 }
 
                 // Remove old media via mutation before creating new media
                 if (count($oldMediaIds) > 0 && $targetProductId) {
+                    $this->logger->info(sprintf('Attempting to delete %d old media items for product %s.', count($oldMediaIds), $targetProductId), [
+                        'eventId' => $eventId,
+                        'topic' => $topic,
+                        'productId' => $targetProductId,
+                        'oldMediaIds' => $oldMediaIds,
+                    ]);
                     try {
                         $deleteResp   = $this->requestQuery($this->graphQLQueryHelper->getProductDeleteMediaMutation(),
                             ['mediaIds' => $oldMediaIds, 'productId' => $targetProductId]);
                         $deleteErrors = $deleteResp['data']['productDeleteMedia']['userErrors'] ?? [];
                         if ( ! empty($deleteErrors)) {
-                            $this->logger->warning('productDeleteMedia userErrors', ['errors' => $deleteErrors]);
+                            $this->logger->warning('productDeleteMedia userErrors', [
+                                'eventId' => $eventId,
+                                'topic' => $topic,
+                                'errors' => $deleteErrors,
+                                'productId' => $targetProductId,
+                                'mediaIdsAttempted' => $oldMediaIds,
+                            ]);
+                        } else {
+                            $this->logger->info('Successfully deleted old media items.', [
+                                'eventId' => $eventId,
+                                'topic' => $topic,
+                                'productId' => $targetProductId,
+                            ]);
                         }
                     } catch (\Throwable $e) {
-                        $this->logger->error('Exception during productDeleteMedia: ' . $e->getMessage());
+                        $this->logger->error('Exception during productDeleteMedia: ' . $e->getMessage(), [
+                            'eventId' => $eventId,
+                            'topic' => $topic,
+                            'productId' => $targetProductId,
+                            'oldMediaIds' => $oldMediaIds,
+                        ]);
                     }
+                } else {
+                    $this->logger->debug('No old media items to delete for product.', [
+                        'eventId' => $eventId,
+                        'topic' => $topic,
+                        'productId' => $targetProductId,
+                    ]);
                 }
 
                 // Create new media if provided
                 if (count($newMediaInputs) > 0 && $targetProductId) {
+                    $this->logger->info(sprintf('Attempting to create %d new media items for product %s.', count($newMediaInputs), $targetProductId), [
+                        'eventId' => $eventId,
+                        'topic' => $topic,
+                        'productId' => $targetProductId,
+                        'newMediaInputsCount' => count($newMediaInputs),
+                    ]);
                     try {
                         $createResp   = $this->requestQuery($this->graphQLQueryHelper->getProductCreateMediaMutation(),
                             [
@@ -112,21 +196,45 @@ class ShopifyWebhookConsumer implements ConsumerInterface
                             ]);
                         $createErrors = $createResp['data']['productCreateMedia']['mediaUserErrors'] ?? [];
                         if ( ! empty($createErrors)) {
-                            $this->logger->warning('ProductCreateMedia mediaUserErrors', ['errors' => $createErrors]);
+                            $this->logger->warning('ProductCreateMedia mediaUserErrors', [
+                                'eventId' => $eventId,
+                                'topic' => $topic,
+                                'errors' => $createErrors,
+                                'productId' => $targetProductId,
+                                'newMediaInputsCount' => count($newMediaInputs),
+                            ]);
+                        } else {
+                            $this->logger->info('Successfully created new media items.', [
+                                'eventId' => $eventId,
+                                'topic' => $topic,
+                                'productId' => $targetProductId,
+                            ]);
                         }
                     } catch (\Throwable $e) {
-                        $this->logger->error('Exception during productCreateMedia: ' . $e->getMessage());
+                        $this->logger->error('Exception during productCreateMedia: ' . $e->getMessage(), [
+                            'eventId' => $eventId,
+                            'topic' => $topic,
+                            'exception' => $e,
+                            'productId' => $targetProductId,
+                            'newMediaInputsCount' => count($newMediaInputs),
+                        ]);
                     }
+                } else {
+                    $this->logger->debug('No new media items to create for product.', [
+                        'eventId' => $eventId,
+                        'topic' => $topic,
+                        'productId' => $targetProductId,
+                    ]);
                 }
             } else {
-                $this->logger->info('Shopify webhook topic ignored', ['topic' => $topic]);
+                $this->logger->info('Shopify webhook topic ignored', ['topic' => $topic, 'eventId' => $eventId]);
             }
 
             // Mark event processed successfully
-            $this->logger->info('Shopify webhook processed successfully', ['event_id' => $eventId, 'topic' => $topic]);
+            $this->logger->info('Shopify webhook processed successfully', ['eventId' => $eventId, 'topic' => $topic]);
         } catch (\Throwable $e) {
-            $this->logger->error('Error processing Shopify webhook' . $e->getMessage(),
-                ['event_id' => $eventId, 'topic' => $topic, 'exception' => $e]);
+            $this->logger->error('Error processing Shopify webhook: ' . $e->getMessage(),
+                ['eventId' => $eventId, 'topic' => $topic, 'exception' => $e, 'payload' => $payload]);
         }
     }
 
