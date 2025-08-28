@@ -1357,39 +1357,6 @@ class GraphQLQueryHelper
     ');
     }
 
-    public function getProductVariantsBulkCreateMutation(): string {
-        return '
-        mutation ProductVariantsBulkCreate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-            productVariantsBulkCreate(productId: $productId, variants: $variants) {
-                product { id }
-                productVariants {
-                    id
-                    title
-                    sku
-                    price
-                }
-                userErrors { field message }
-            }
-        }
-        ';
-    }
-
-    public function getProductVariantsBulkUpdateMutation(): string {
-        return '
-        mutation ProductVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-            productVariantsBulkUpdate(productId: $productId, variants: $variants) {
-                productVariants {
-                    id
-                    title
-                    sku
-                    price
-                }
-                userErrors { field message }
-            }
-        }
-        ';
-    }
-
     public function getProductCreateMediaMutation(): string {
         return '
         mutation ProductCreateMedia($productId: ID!, $media: [CreateMediaInput!]!) {
