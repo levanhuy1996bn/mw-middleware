@@ -6632,4 +6632,337 @@ class GraphQLQueryHelperTest extends TestCase
 //            $this->formatGraphQLQueryString($graphqlQueryHelper->collectionRemoveProductsQuery())
 //        );
     }
+
+    public function testProductCreateMutation()
+    {
+        $graphqlQueryHelper = new GraphQLQueryHelper();
+
+        $this->assertEquals('mutation productCreate($input: ProductInput!) {
+          productCreate(input: $input) {
+            product {
+              id
+              title
+              handle
+              vendor
+              productType
+              variants(first: 250) {
+                edges {
+                  node {
+                    id
+                    title
+                    sku
+                    price
+                  }
+                }
+              }
+            }
+            userErrors {
+              field
+              message
+            }
+          }
+        }',
+            $graphqlQueryHelper->getProductCreateMutation()
+        );
+
+        $gql = $this->generateGraphQL('mutation', 'productCreate', [
+            'input' => [
+                'type' => 'ProductInput!',
+            ],
+        ], [
+            'product' => [
+                'id',
+                'title',
+                'handle',
+                'vendor',
+                'productType',
+                'variants(first: 250)' => [
+                    'edges' => [
+                        'node' => [
+                            'id',
+                            'title',
+                            'sku',
+                            'price',
+                        ],
+                    ],
+                ],
+            ],
+            'userErrors' => [
+                'field',
+                'message',
+            ],
+        ], []);
+
+        $this->assertEquals('mutation productCreate(
+  $input: ProductInput!
+) {
+  productCreate(
+    input: $input
+  ) {
+    product {
+      id
+      title
+      handle
+      vendor
+      productType
+      variants(first: 250) {
+        edges {
+          node {
+            id
+            title
+            sku
+            price
+          }
+        }
+      }
+    }
+    userErrors {
+      field
+      message
+    }
+  }
+}', $gql);
+    }
+
+    public function testProductUpdateMutation()
+    {
+        $graphqlQueryHelper = new GraphQLQueryHelper();
+
+        $this->assertEquals('mutation productUpdate($input: ProductInput!) {
+          productUpdate(input: $input) {
+            product {
+              id
+              title
+              handle
+              vendor
+              productType
+              media(first: 250) {
+                nodes {
+                  id
+                }
+              }
+              variants(first: 250) {
+                edges {
+                  node {
+                    id
+                    title
+                    sku
+                    price
+                  }
+                }
+              }
+            }
+            userErrors {
+              field
+              message
+            }
+          }
+        }',
+            $graphqlQueryHelper->getProductUpdateMutation()
+        );
+
+        $gql = $this->generateGraphQL('mutation', 'productUpdate', [
+            'input' => [
+                'type' => 'ProductInput!',
+            ],
+        ], [
+            'product' => [
+                'id',
+                'title',
+                'handle',
+                'vendor',
+                'productType',
+                'media(first: 250)' => [
+                    'nodes' => [
+                        'id',
+                    ],
+                ],
+                'variants(first: 250)' => [
+                    'edges' => [
+                        'node' => [
+                            'id',
+                            'title',
+                            'sku',
+                            'price',
+                        ],
+                    ],
+                ],
+            ],
+            'userErrors' => [
+                'field',
+                'message',
+            ],
+        ], []);
+
+        $this->assertEquals('mutation productUpdate(
+  $input: ProductInput!
+) {
+  productUpdate(
+    input: $input
+  ) {
+    product {
+      id
+      title
+      handle
+      vendor
+      productType
+      media(first: 250) {
+        nodes {
+          id
+        }
+      }
+      variants(first: 250) {
+        edges {
+          node {
+            id
+            title
+            sku
+            price
+          }
+        }
+      }
+    }
+    userErrors {
+      field
+      message
+    }
+  }
+}', $gql);
+    }
+
+    public function testProductCreateMediaMutation()
+    {
+        $graphqlQueryHelper = new GraphQLQueryHelper();
+
+        $this->assertEquals('mutation productCreateMedia($productId: ID!, $media: [CreateMediaInput!]!) {
+          productCreateMedia(productId: $productId, media: $media) {
+            media {
+              alt
+              mediaContentType
+              status
+            }
+            mediaUserErrors {
+              field
+              message
+            }
+          }
+        }',
+            $graphqlQueryHelper->getProductCreateMediaMutation()
+        );
+
+        $gql = $this->generateGraphQL('mutation', 'productCreateMedia', [
+            'productId' => [
+                'type' => 'ID!',
+            ],
+            'media' => [
+                'type' => '[CreateMediaInput!]!',
+            ],
+        ], [
+            'media' => [
+                'alt',
+                'mediaContentType',
+                'status',
+            ],
+            'mediaUserErrors' => [
+                'field',
+                'message',
+            ],
+        ], []);
+
+        $this->assertEquals('mutation productCreateMedia(
+  $productId: ID!,
+  $media: [CreateMediaInput!]!
+) {
+  productCreateMedia(
+    productId: $productId,
+    media: $media
+  ) {
+    media {
+      alt
+      mediaContentType
+      status
+    }
+    mediaUserErrors {
+      field
+      message
+    }
+  }
+}', $gql);
+    }
+
+    public function testProductDeleteMediaMutation()
+    {
+        $graphqlQueryHelper = new GraphQLQueryHelper();
+
+        $this->assertEquals('mutation productDeleteMedia($mediaIds: [ID!]!, $productId: ID!) {
+          productDeleteMedia(mediaIds: $mediaIds, productId: $productId) {
+            userErrors {
+              field
+              message
+            }
+          }
+        }',
+            $graphqlQueryHelper->getProductDeleteMediaMutation()
+        );
+
+        $gql = $this->generateGraphQL('mutation', 'productDeleteMedia', [
+            'mediaIds' => [
+                'type' => '[ID!]!',
+            ],
+            'productId' => [
+                'type' => 'ID!',
+            ],
+        ], [
+            'userErrors' => [
+                'field',
+                'message',
+            ],
+        ], []);
+
+        $this->assertEquals('mutation productDeleteMedia(
+  $mediaIds: [ID!]!,
+  $productId: ID!
+) {
+  productDeleteMedia(
+    mediaIds: $mediaIds,
+    productId: $productId
+  ) {
+    userErrors {
+      field
+      message
+    }
+  }
+}', $gql);
+    }
+
+    public function testProductIdByHandleQuery()
+    {
+        $graphqlQueryHelper = new GraphQLQueryHelper();
+
+        $this->assertEquals('query productByHandle($handle: String!) {
+          productByHandle(handle: $handle) {
+            id
+          }
+        }',
+            $graphqlQueryHelper->getProductIdByHandleQuery()
+        );
+
+        $gql = $this->generateGraphQL('query', 'productByHandle', [
+            'handle' => [
+                'type' => 'String!',
+            ],
+        ], [
+            'id',
+        ], []);
+
+        $this->assertEquals('query productByHandle(
+  $handle: String!
+) {
+  productByHandle(
+    handle: $handle
+  ) {
+    id
+  }
+}', $gql);
+    }
 }
